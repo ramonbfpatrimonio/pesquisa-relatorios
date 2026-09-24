@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pesquisa de Relatórios</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="preloader" aria-hidden="true">
+    <div class="preloader-conteudo">
+      <img src="assets/logo.png" alt="" class="preloader-logo">
+      <div class="preloader-barra"><div class="preloader-progresso"></div></div>
+      <p class="preloader-texto">Carregando relatórios…</p>
+    </div>
+  </div>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="marca">
+        <img src="assets/logo.png" alt="Ativo.ERP" class="marca-logo">
+        <span class="marca-texto">Pesquisa de Relatórios</span>
+      </div>
+      <nav id="abas" aria-label="Seções"></nav>
+    </aside>
+    <main id="conteudo" tabindex="-1"></main>
+  </div>
+  <div id="camada-modais"></div>
+  <div id="avisos" role="status" aria-live="polite"></div>
+  <script src="../src/busca.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

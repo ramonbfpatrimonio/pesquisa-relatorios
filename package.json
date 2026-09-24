@@ -1,0 +1,63 @@
+{
+  "name": "pesquisa-relatorios",
+  "productName": "Pesquisa de Relatórios",
+  "version": "1.0.0",
+  "description": "Pesquisa de relatórios por colunas, com dados salvos no próprio computador",
+  "main": "main.js",
+  "author": "Ramon",
+  "license": "UNLICENSED",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "test": "node --test \"test/*.test.js\"",
+    "dist": "electron-builder --win nsis",
+    "release": "electron-builder --win nsis --publish always"
+  },
+  "build": {
+    "appId": "br.com.ramon.pesquisarelatorios",
+    "productName": "Pesquisa de Relatórios",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*",
+      "data/**/*",
+      "build/icon.png",
+      "build/icon.ico",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "SEU_USUARIO_GITHUB",
+      "repo": "pesquisa-relatorios"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "language": "1046",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp"
+    }
+  },
+  "devDependencies": {
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3",
+    "jsdom": "^30.1.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}
