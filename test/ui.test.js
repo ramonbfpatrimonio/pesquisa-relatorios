@@ -116,6 +116,12 @@ test('abre na aba Pesquisar com o menu protegido escondido e a lista de colunas 
   a.fechar();
 });
 
+test('mostra a versão do app no canto inferior esquerdo da barra lateral', async () => {
+  const a = await abrirApp();
+  assert.equal(a.doc.querySelector('#versao-app').textContent, 'vteste');
+  a.fechar();
+});
+
 test('lista de módulos é recolhível e começa fechada', async () => {
   const a = await abrirApp();
   const cabecalho = a.doc.querySelector('.modulo-cabecalho');

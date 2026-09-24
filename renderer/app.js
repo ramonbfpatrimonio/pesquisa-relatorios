@@ -1374,6 +1374,8 @@
     }
     estado.db = r.dados.db;
     estado.info = r.dados.info;
+    const elVersao = document.getElementById('versao-app');
+    if (elVersao) elVersao.textContent = `v${estado.info.versao}`;
     montarAbas();
     render();
     esconderPreloader();
