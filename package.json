@@ -33,7 +33,7 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "SEU_USUARIO_GITHUB",
+      "owner": "ramonbfpatrimonio",
       "repo": "pesquisa-relatorios"
     },
     "win": {
