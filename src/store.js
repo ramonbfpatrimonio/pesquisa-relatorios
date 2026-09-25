@@ -417,6 +417,51 @@ class Store {
     return this._trocarBanco(novo, 'antes-de-importar');
   }
 
+  // Importação em lote (CSV): cada linha já validada vira um relatório novo, ou atualiza
+  // um existente (mesmo módulo + mesmo nome). Cria módulo que ainda não existe. Um backup
+  // só, antes de começar — igual às outras importações.
+  importarRelatoriosEmLote(linhas) {
+    if (!Array.isArray(linhas) || !linhas.length) throw new Error('Não há nada para importar.');
+    if (this.db) this.criarBackup('antes-de-importar');
+
+    let novosModulos = 0;
+    let novos = 0;
+    let atualizados = 0;
+    for (const linha of linhas) {
+      const modulo = String(linha.modulo || '').trim();
+      const nome = String(linha.nome || '').replace(/\s+/g, ' ').trim();
+      const colunas = unicos((linha.colunas || []).map(limparNomeColuna).filter(Boolean));
+      if (!modulo || !nome || !colunas.length) continue; // linha inválida: já devia ter sido barrada antes, mas por segurança pula
+
+      if (!this.db.modulos.includes(modulo)) {
+        this.db.modulos.push(modulo);
+        novosModulos++;
+      }
+      const funcionalidadeTxt = String(linha.funcionalidade || '').replace(/\s+/g, ' ').trim();
+      const funcionalidade = funcionalidadeTxt || null;
+
+      const existente = this.db.relatorios.find((r) => r.modulo === modulo && nomeComparavel(r.nome) === nomeComparavel(nome));
+      if (existente) {
+        existente.colunas = colunas;
+        if (funcionalidade) existente.funcionalidade = funcionalidade;
+        atualizados++;
+      } else {
+        this.db.relatorios.push({
+          id: 'r' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'),
+          modulo,
+          nome,
+          colunas,
+          imagem: null,
+          imagemOriginal: null,
+          funcionalidade,
+        });
+        novos++;
+      }
+    }
+    this._gravar();
+    return { db: this.db, novosModulos, novos, atualizados };
+  }
+
   definirPastaBackup(nova) {
     fs.mkdirSync(path.join(nova, 'imagens'), { recursive: true });
     const teste = path.join(nova, '.teste-escrita');

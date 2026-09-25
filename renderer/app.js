@@ -1,6 +1,7 @@
 'use strict';
 (function () {
   const B = window.Busca;
+  const Csv = window.Csv;
 
   const estado = {
     db: null,
@@ -205,6 +206,7 @@
         {
           type: 'button',
           class: `btn${a.tipo ? ' ' + a.tipo : ''}${a.esquerda ? ' esquerda' : ''}`,
+          disabled: !!a.desabilitado,
           onclick: async (e) => {
             const botao = e.currentTarget;
             botao.disabled = true;
@@ -1176,6 +1178,151 @@
     'antes-de-importar': 'Antes de importar',
   };
 
+  // ---------- importação de relatórios em lote (CSV) ----------
+
+  // Compara os dados do CSV com o banco atual: decide se cada linha é relatório novo,
+  // atualização de um que já existe, ou tem erro. Resolve duplicata dentro do próprio
+  // arquivo (mesmo módulo + nome em duas linhas): fica só a última, nunca as duas.
+  function classificarLinhasCSV(linhas, db) {
+    const chaveNome = (s) => B.semAcento(String(s)).toLowerCase().replace(/\s+/g, ' ').trim();
+    const vistos = new Map();
+    const resultado = [];
+    const avisos = [];
+    for (const linha of linhas) {
+      if (linha.erros.length) {
+        resultado.push({ ...linha, status: 'erro' });
+        continue;
+      }
+      const chave = linha.modulo.toUpperCase() + '|' + chaveNome(linha.nome);
+      if (vistos.has(chave)) {
+        const i = vistos.get(chave);
+        avisos.push(`As linhas ${resultado[i].numeroLinha} e ${linha.numeroLinha} são o mesmo relatório (“${linha.nome}” em ${linha.modulo}) — só a linha ${linha.numeroLinha} vai ser importada.`);
+        resultado[i] = { ...resultado[i], status: 'substituida' };
+      }
+      const existe = db.relatorios.some((r) => r.modulo === linha.modulo && chaveNome(r.nome) === chaveNome(linha.nome));
+      const moduloNovo = !db.modulos.includes(linha.modulo);
+      vistos.set(chave, resultado.length);
+      resultado.push({ ...linha, status: existe ? 'atualiza' : 'novo', moduloNovo });
+    }
+    return { linhas: resultado, avisos };
+  }
+
+  function abrirGuiaImportacaoCSV() {
+    abrirModal({
+      titulo: 'Importar relatórios de uma planilha (CSV)',
+      larga: true,
+      corpo: [
+        h('p', {}, 'O arquivo precisa ter estas colunas na primeira linha (a ordem entre elas não importa):'),
+        h(
+          'ul', {},
+          h('li', {}, h('b', {}, 'MODULO'), ' — o módulo do relatório. Se ainda não existir, é criado sozinho.'),
+          h('li', {}, h('b', {}, 'NOME'), ' — o nome do relatório.'),
+          h('li', {}, h('b', {}, 'FUNCIONALIDADE'), ' — para que ele serve. Pode deixar em branco.'),
+          h('li', {}, h('b', {}, 'COLUNAS'), ' — todas as colunas do relatório numa célula só, separadas por ponto e vírgula ( ; ).')
+        ),
+        h('p', {}, 'Uma linha por relatório. Se já existir um relatório com o mesmo nome nesse módulo, as colunas e a funcionalidade dele são atualizadas (nada duplica).'),
+        h('p', { class: 'rotulo' }, 'Exemplo:'),
+        h('pre', { class: 'exemplo-csv' }, 'MODULO;NOME;FUNCIONALIDADE;COLUNAS\nATIVO_LOG;Vendas por Vendedor;Mostra o total vendido por vendedor.;"VENDEDOR;VALOR;DATA;CLIENTE"'),
+        h('p', { class: 'ajuda' }, 'Pode salvar do Excel com vírgula ou com ponto e vírgula separando as colunas — o programa reconhece sozinho. Se algum texto tiver acento e vier estranho, tente salvar como “CSV UTF-8”.'),
+      ],
+      acoes: [
+        {
+          rotulo: 'Baixar modelo (.csv)',
+          esquerda: true,
+          aoClicar: async () => {
+            const r = await chamar('baixarModeloRelatoriosCSV');
+            if (r && r.dados) aviso('Modelo salvo: ' + r.dados);
+            return false;
+          },
+        },
+        { rotulo: 'Cancelar' },
+        { rotulo: 'Escolher arquivo…', tipo: 'primario', aoClicar: () => escolherEValidarCSV() },
+      ],
+    });
+  }
+
+  async function escolherEValidarCSV() {
+    const r = await chamar('lerRelatoriosCSV');
+    if (!r || !r.dados) return;
+    const analise = Csv.analisarCSV(r.dados.conteudo);
+    if (!analise.ok) {
+      aviso(analise.erroGeral, 'erro', 10000);
+      return;
+    }
+    const { linhas, avisos } = classificarLinhasCSV(analise.linhas, estado.db);
+    abrirPreviaImportacaoCSV({ nomeArquivo: r.dados.nomeArquivo, linhas, avisos });
+  }
+
+  const RECADO_STATUS = { novo: 'Novo', atualiza: 'Atualiza', erro: 'Erro' };
+
+  function abrirPreviaImportacaoCSV({ nomeArquivo, linhas, avisos }) {
+    const validas = linhas.filter((l) => l.status === 'novo' || l.status === 'atualiza');
+    const novos = validas.filter((l) => l.status === 'novo').length;
+    const atualiza = validas.filter((l) => l.status === 'atualiza').length;
+    const comErro = linhas.filter((l) => l.status === 'erro');
+    const modulosNovos = new Set(validas.filter((l) => l.moduloNovo).map((l) => l.modulo));
+    const visiveis = linhas.filter((l) => l.status !== 'substituida');
+
+    abrirModal({
+      titulo: 'Confirmar importação',
+      larga: true,
+      corpo: [
+        h('p', {}, `Arquivo: ${nomeArquivo} — ${plural(linhas.length, 'linha', 'linhas')} de relatório.`),
+        h(
+          'div',
+          { class: 'numeros' },
+          h('div', {}, h('b', {}, novos), h('span', {}, 'novos')),
+          h('div', {}, h('b', {}, atualiza), h('span', {}, 'atualizados')),
+          h('div', {}, h('b', {}, modulosNovos.size), h('span', {}, 'módulos novos')),
+          h('div', {}, h('b', {}, comErro.length), h('span', {}, 'com erro'))
+        ),
+        avisos.length ? h('div', {}, avisos.map((a) => h('p', { class: 'ajuda' }, a))) : null,
+        h(
+          'div',
+          { class: 'previa-csv' },
+          h(
+            'table',
+            { class: 'tabela' },
+            h('thead', {}, h('tr', {}, h('th', {}, 'Linha'), h('th', {}, 'Módulo'), h('th', {}, 'Relatório'), h('th', {}, 'Colunas'), h('th', {}, 'Situação'))),
+            h(
+              'tbody',
+              {},
+              visiveis.map((l) =>
+                h(
+                  'tr',
+                  {},
+                  h('td', { class: 'num' }, l.numeroLinha),
+                  h('td', { class: 'mono' }, l.modulo || '—'),
+                  h('td', {}, l.nome || '—'),
+                  h('td', {}, l.status === 'erro' ? l.erros.join(', ') : plural(l.colunas.length, 'coluna', 'colunas')),
+                  h('td', {}, h('span', { class: 'tag' + (l.status === 'novo' ? ' auto' : l.status === 'erro' ? ' perigo' : '') }, RECADO_STATUS[l.status]))
+                )
+              )
+            )
+          )
+        ),
+      ],
+      acoes: [
+        { rotulo: 'Cancelar' },
+        {
+          rotulo: validas.length ? `Importar ${validas.length} ${validas.length === 1 ? 'relatório' : 'relatórios'}` : 'Nada para importar',
+          tipo: 'primario',
+          desabilitado: !validas.length,
+          aoClicar: async () => {
+            const payload = validas.map((l) => ({ modulo: l.modulo, nome: l.nome, funcionalidade: l.funcionalidade, colunas: l.colunas }));
+            const r = await chamar('importarRelatoriosCSV', payload);
+            if (!r) return false;
+            atualizarBanco(r.dados.db);
+            const partes = [`${r.dados.novos} novo(s)`, `${r.dados.atualizados} atualizado(s)`];
+            if (r.dados.novosModulos) partes.push(`${r.dados.novosModulos} módulo(s) novo(s)`);
+            aviso('Importação concluída: ' + partes.join(', ') + '.', '', 7000);
+            render();
+          },
+        },
+      ],
+    });
+  }
+
   function renderDados(alvo) {
     const colunas = new Set();
     estado.db.relatorios.forEach((r) => r.colunas.forEach((c) => colunas.add(c)));
@@ -1317,7 +1464,8 @@
                     render();
                   }
                 },
-              }, 'Importar imagens de uma pasta')
+              }, 'Importar imagens de uma pasta'),
+              h('button', { type: 'button', class: 'btn', onclick: () => abrirGuiaImportacaoCSV() }, 'Importar relatórios (CSV)')
             ),
             h('p', { class: 'ajuda' }, 'Importar imagens: escolha a pasta “IMAGENS FILTRO RELAORIOS ADM”. O programa liga cada arquivo ao relatório que a planilha original apontava.')
           ),

@@ -555,3 +555,87 @@ test('nomes de coluna com HTML aparecem como texto, nunca como código', async (
   assert.ok(a.doc.querySelector('.rel .chip').textContent.includes('<IMG SRC=X'));
   a.fechar();
 });
+
+test('importar relatórios por CSV: guia de formato, prévia com novo/atualiza/erro/duplicata, e importação de verdade', async () => {
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-csv-ui-'));
+  const arquivo = path.join(raiz, 'lote.csv');
+
+  const a = await abrirApp({ abrirCSV: async () => arquivo });
+  const existente = a.store.db.relatorios[0]; // vai virar "atualiza"
+
+  const conteudo =
+    'MODULO;NOME;FUNCIONALIDADE;COLUNAS\n' +
+    'ATIVO_TESTE_CSV;Relatorio Novo;Primeira versão da linha.;"COL_A;COL_B"\n' +
+    'ATIVO_TESTE_CSV;Relatorio Novo;Segunda versão (essa que vale).;"COL_C"\n' +
+    'ATIVO_ECD;;;"COL_X"\n' +
+    `${existente.modulo};${existente.nome};Atualizado pelo CSV.;"COL_ATUALIZADA"\n`;
+  fs.writeFileSync(arquivo, conteudo, 'utf8');
+
+  await a.aba('Dados e backup');
+  await esperar(() => a.botao('Importar relatórios (CSV)'));
+  a.clicar(a.botao('Importar relatórios (CSV)'));
+  await esperar(() => a.modal());
+  assert.match(a.modal().textContent, /MODULO/);
+  assert.match(a.modal().textContent, /COLUNAS/);
+
+  a.clicar(a.botao('Escolher arquivo…', a.modal()));
+  await esperar(() => a.modal() && /Confirmar importação/.test(a.modal().textContent));
+
+  const modal = a.modal();
+  // 2 novos (o "Relatorio Novo" que venceu a duplicata + a atualização não conta aqui), 1 atualizado, 1 com erro, 1 módulo novo
+  assert.match(modal.textContent, /duplicata|mesmo relatório/i, 'deve avisar sobre a linha duplicada no arquivo');
+  const linhas = a.todos('tbody tr', modal);
+  assert.equal(linhas.length, 3); // a linha 2 (duplicada, substituída) não aparece na tabela
+  assert.ok(!modal.textContent.includes('Primeira versão da linha'));
+
+  const botaoImportar = [...modal.querySelectorAll('.btn')].find((b) => /^Importar \d+/.test(b.textContent));
+  assert.ok(botaoImportar, 'botão de importar deve mostrar a quantidade válida (2)');
+  assert.match(botaoImportar.textContent, /^Importar 2/);
+
+  a.clicar(botaoImportar);
+  await esperar(() => !a.modal());
+
+  assert.ok(a.store.db.modulos.includes('ATIVO_TESTE_CSV'));
+  const criado = a.store.db.relatorios.find((r) => r.nome === 'Relatorio Novo');
+  assert.ok(criado);
+  assert.deepEqual(criado.colunas, ['COL_C']); // a versão que "venceu" foi a segunda linha
+  assert.equal(criado.funcionalidade, 'Segunda versão (essa que vale).');
+
+  const atualizado = a.store.db.relatorios.find((r) => r.id === existente.id);
+  assert.deepEqual(atualizado.colunas, ['COL_ATUALIZADA']);
+  assert.equal(atualizado.funcionalidade, 'Atualizado pelo CSV.');
+
+  assert.equal(a.store.db.relatorios.some((r) => !r.nome), false); // a linha com erro (sem nome) não foi importada
+  a.fechar();
+});
+
+test('importar relatórios por CSV: arquivo com cabeçalho errado mostra aviso e não abre a prévia', async () => {
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-csv-erro-'));
+  const arquivo = path.join(raiz, 'ruim.csv');
+  fs.writeFileSync(arquivo, 'A,B,C\n1,2,3\n', 'utf8');
+
+  const a = await abrirApp({ abrirCSV: async () => arquivo });
+  await a.aba('Dados e backup');
+  await esperar(() => a.botao('Importar relatórios (CSV)'));
+  a.clicar(a.botao('Importar relatórios (CSV)'));
+  await esperar(() => a.modal());
+  a.clicar(a.botao('Escolher arquivo…', a.modal()));
+  await esperar(() => a.doc.querySelector('.aviso.erro'));
+  assert.match(a.doc.querySelector('.aviso.erro').textContent, /MODULO/);
+  assert.ok(!a.modal(), 'não deve abrir a prévia com o cabeçalho errado');
+  a.fechar();
+});
+
+test('importar relatórios por CSV: botão "Baixar modelo" chama a ação certa', async () => {
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-csv-modelo-'));
+  const destino = path.join(raiz, 'modelo.csv');
+  const a = await abrirApp({ salvarCSV: async () => destino });
+  await a.aba('Dados e backup');
+  await esperar(() => a.botao('Importar relatórios (CSV)'));
+  a.clicar(a.botao('Importar relatórios (CSV)'));
+  await esperar(() => a.modal());
+  a.clicar(a.botao('Baixar modelo (.csv)', a.modal()));
+  await esperar(() => fs.existsSync(destino));
+  assert.match(fs.readFileSync(destino, 'utf8'), /MODULO;NOME;FUNCIONALIDADE;COLUNAS/);
+  a.fechar();
+});

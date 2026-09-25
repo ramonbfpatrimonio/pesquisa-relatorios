@@ -214,3 +214,55 @@ test('gravação é atômica: nenhum .tmp sobra', () => {
   store.adicionarModulo('A1');
   assert.ok(!fs.readdirSync(store.pastaDados).some((n) => n.endsWith('.tmp')));
 });
+
+test('importarRelatoriosEmLote cria módulo e relatório novos, e faz backup antes', () => {
+  const { store } = novoStore();
+  const antes = store.listarBackups().length;
+  const r = store.importarRelatoriosEmLote([
+    { modulo: 'ATIVO_NOVO', nome: '  Teste   Lote  ', colunas: ['valor', 'CLIENTE', 'valor'], funcionalidade: '  Serve pra testar.  ' },
+  ]);
+  assert.equal(r.novosModulos, 1);
+  assert.equal(r.novos, 1);
+  assert.equal(r.atualizados, 0);
+  assert.ok(store.db.modulos.includes('ATIVO_NOVO'));
+  const criado = store.db.relatorios.find((x) => x.nome === 'Teste Lote');
+  assert.ok(criado);
+  assert.deepEqual(criado.colunas, ['VALOR', 'CLIENTE']);
+  assert.equal(criado.funcionalidade, 'Serve pra testar.');
+  assert.equal(store.listarBackups().length, antes + 1);
+  assert.ok(store.listarBackups().some((b) => b.tipo === 'antes-de-importar'));
+});
+
+test('importarRelatoriosEmLote atualiza relatório existente (mesmo módulo + nome, sem diferenciar caixa)', () => {
+  const { store } = novoStore();
+  const alvo = store.db.relatorios[0];
+  const r = store.importarRelatoriosEmLote([
+    { modulo: alvo.modulo, nome: alvo.nome.toUpperCase(), colunas: ['COLUNA_ATUALIZADA'], funcionalidade: 'Nova descrição.' },
+  ]);
+  assert.equal(r.novos, 0);
+  assert.equal(r.atualizados, 1);
+  assert.equal(store.db.relatorios.length, 841); // não duplicou, só atualizou
+  const atualizado = store.db.relatorios.find((x) => x.id === alvo.id);
+  assert.deepEqual(atualizado.colunas, ['COLUNA_ATUALIZADA']);
+  assert.equal(atualizado.funcionalidade, 'Nova descrição.');
+});
+
+test('importarRelatoriosEmLote com funcionalidade em branco mantém a que já existia', () => {
+  const { store } = novoStore();
+  const alvo = store.db.relatorios.find((r) => r.funcionalidade);
+  const original = alvo.funcionalidade;
+  store.importarRelatoriosEmLote([{ modulo: alvo.modulo, nome: alvo.nome, colunas: alvo.colunas, funcionalidade: '' }]);
+  assert.equal(store.db.relatorios.find((x) => x.id === alvo.id).funcionalidade, original);
+});
+
+test('importarRelatoriosEmLote ignora linha inválida (sem quebrar as outras) e recusa lista vazia', () => {
+  const { store } = novoStore();
+  const r = store.importarRelatoriosEmLote([
+    { modulo: '', nome: 'Sem módulo', colunas: ['A'] },
+    { modulo: 'ATIVO_ECD', nome: 'Válido', colunas: ['A'] },
+  ]);
+  assert.equal(r.novos, 1);
+  assert.ok(store.db.relatorios.some((x) => x.nome === 'Válido'));
+  assert.ok(!store.db.relatorios.some((x) => x.nome === 'Sem módulo'));
+  assert.throws(() => store.importarRelatoriosEmLote([]), /nada para importar/);
+});

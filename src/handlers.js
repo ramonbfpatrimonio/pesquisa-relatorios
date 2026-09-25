@@ -6,6 +6,23 @@
  * Todo handler devolve { ok: true, dados } ou { ok: false, erro }.
  */
 const fs = require('fs');
+const path = require('path');
+
+// Excel no Brasil às vezes salva CSV como "ANSI" (Windows-1252), não UTF-8. Lemos como UTF-8
+// primeiro; se aparecer o caractere de "isso não deu certo" (�), tentamos de novo como Latin-1,
+// que cobre bem os acentos do português nesse caso.
+function lerTextoDetectandoCodificacao(caminho) {
+  const buffer = fs.readFileSync(caminho);
+  const comoUtf8 = buffer.toString('utf8');
+  if (!comoUtf8.includes('\ufffd')) return comoUtf8;
+  return buffer.toString('latin1');
+}
+
+const MODELO_CSV_RELATORIOS =
+  '\ufeff' +
+  'MODULO;NOME;FUNCIONALIDADE;COLUNAS\r\n' +
+  'ATIVO_LOG;Vendas por Vendedor;Mostra o total vendido por cada vendedor no período.;"VENDEDOR;VALOR;DATA;CLIENTE"\r\n' +
+  'ATIVO_ADM;Cheques Pendentes;;"CHEQUE;BANCO;VENCIMENTO"\r\n';
 
 function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, verificarAtualizacoes, baixarAtualizacao, instalarAtualizacao }) {
   const uteis = () => ({
@@ -62,6 +79,19 @@ function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, 
       if (!destino) return null;
       // BOM para o Excel reconhecer os acentos.
       fs.writeFileSync(destino, '\ufeff' + String(conteudo), 'utf8');
+      return destino;
+    },
+
+    lerRelatoriosCSV: async () => {
+      const caminho = await dialogo.abrirCSV();
+      if (!caminho) return null;
+      return { conteudo: lerTextoDetectandoCodificacao(caminho), nomeArquivo: path.basename(caminho) };
+    },
+    importarRelatoriosCSV: (linhas) => store.importarRelatoriosEmLote(linhas),
+    baixarModeloRelatoriosCSV: async () => {
+      const destino = await dialogo.salvarCSV('modelo-relatorios.csv');
+      if (!destino) return null;
+      fs.writeFileSync(destino, MODELO_CSV_RELATORIOS, 'utf8');
       return destino;
     },
 

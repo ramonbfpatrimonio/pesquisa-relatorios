@@ -77,6 +77,14 @@ const dialogo = {
     });
     return r.canceled ? null : r.filePaths[0];
   },
+  async abrirCSV() {
+    const r = await dialog.showOpenDialog(janela, {
+      title: 'Escolha o arquivo CSV de relatórios',
+      properties: ['openFile'],
+      filters: [{ name: 'Planilha CSV', extensions: ['csv'] }],
+    });
+    return r.canceled ? null : r.filePaths[0];
+  },
   async salvarJSON(nomeSugerido) {
     const r = await dialog.showSaveDialog(janela, {
       title: 'Exportar dados',

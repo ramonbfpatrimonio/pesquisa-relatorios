@@ -101,3 +101,48 @@ test('atualizações: erro em uma delas vira { ok: false } como qualquer outro h
   const r = await handlers.baixarAtualizacao();
   assert.deepEqual(r, { ok: false, erro: 'sem internet' });
 });
+
+test('lerRelatoriosCSV lê o arquivo escolhido (e detecta Latin-1 quando não é UTF-8)', async () => {
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-csv-'));
+  const utf8 = path.join(raiz, 'utf8.csv');
+  fs.writeFileSync(utf8, 'MODULO;NOME;COLUNAS\nATIVO_ADM;Relatório de Depósito;"A;B"\n', 'utf8');
+  const { handlers: h1 } = montar({ abrirCSV: async () => utf8 });
+  const r1 = await h1.lerRelatoriosCSV();
+  assert.equal(r1.ok, true);
+  assert.equal(r1.dados.nomeArquivo, 'utf8.csv');
+  assert.match(r1.dados.conteudo, /Relatório de Depósito/);
+
+  const latin1 = path.join(raiz, 'latin1.csv');
+  fs.writeFileSync(latin1, Buffer.from('MODULO;NOME;COLUNAS\nATIVO_ADM;Relatório de Depósito;"A;B"\n', 'latin1'));
+  const { handlers: h2 } = montar({ abrirCSV: async () => latin1 });
+  const r2 = await h2.lerRelatoriosCSV();
+  assert.equal(r2.ok, true);
+  assert.match(r2.dados.conteudo, /Relatório de Depósito/);
+});
+
+test('lerRelatoriosCSV devolve null quando a pessoa cancela a janela', async () => {
+  const { handlers } = montar({ abrirCSV: async () => null });
+  const r = await handlers.lerRelatoriosCSV();
+  assert.deepEqual(r, { ok: true, dados: null });
+});
+
+test('importarRelatoriosCSV repassa as linhas prontas para o store', async () => {
+  const { handlers, store } = montar();
+  const r = await handlers.importarRelatoriosCSV([{ modulo: 'ATIVO_ECD', nome: 'Do CSV', colunas: ['A', 'B'] }]);
+  assert.equal(r.ok, true);
+  assert.equal(r.dados.novos, 1);
+  assert.ok(store.db.relatorios.some((x) => x.nome === 'Do CSV'));
+});
+
+test('baixarModeloRelatoriosCSV grava um arquivo de exemplo que a própria planilha aceita', async () => {
+  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-modelo-'));
+  const destino = path.join(raiz, 'modelo.csv');
+  const { handlers } = montar({ salvarCSV: async () => destino });
+  const r = await handlers.baixarModeloRelatoriosCSV();
+  assert.equal(r.ok, true);
+  assert.equal(r.dados, destino);
+  const Csv = require('../src/csv');
+  const analise = Csv.analisarCSV(fs.readFileSync(destino, 'utf8'));
+  assert.equal(analise.ok, true);
+  assert.equal(analise.linhas.length, 2);
+});

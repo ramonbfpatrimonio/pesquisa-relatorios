@@ -41,6 +41,19 @@ As pastas são criadas na primeira abertura depois de instalar, já com os 841 r
 - Se o arquivo de dados for encontrado danificado, ele é guardado com outro nome e o app restaura o último backup válido, avisando na tela.
 - As imagens são espelhadas em `Backup\imagens\`.
 
+## Importar relatórios em massa (CSV)
+
+Na aba *Dados e backup*, botão "Importar relatórios (CSV)". Antes de escolher o arquivo, mostra um guia com o formato esperado (e um botão para baixar um modelo pronto). Depois de escolher, mostra uma prévia — quantos são novos, quantos atualizam um relatório existente, quantos têm erro — antes de confirmar. Nada é gravado até clicar em "Importar".
+
+Formato do CSV (aceita `,` ou `;` como separador, detecta sozinho):
+
+| Coluna | Obrigatória | O que vai nela |
+|---|---|---|
+| `MODULO` | Sim | Nome do módulo. Se não existir, é criado. |
+| `NOME` | Sim | Nome do relatório. Se já existir um igual no mesmo módulo, atualiza em vez de duplicar. |
+| `FUNCIONALIDADE` | Não | Texto do ícone "?". |
+| `COLUNAS` | Sim | Todas as colunas do relatório numa célula só, separadas por `;` — ex.: `"VALOR;CLIENTE;DATA"`. |
+
 ## Como a pesquisa funciona
 
 Escolha uma ou mais colunas no menu **Pesquisar** (o módulo agora é uma lista, na lateral). Os relatórios aparecem **agrupados pela quantidade de colunas escolhidas que eles têm** (3/3, 2/3, 1/3…). Cada grupo vem resumido atrás de uma seta — clique no cabeçalho para abrir a lista; o melhor grupo já vem aberto. Dá para filtrar por módulo e exportar o resultado em CSV (abre direto no Excel).
