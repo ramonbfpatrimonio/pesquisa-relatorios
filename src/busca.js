@@ -210,6 +210,59 @@
     return linhas.map((l) => l.map(celulaCSV).join(';')).join('\r\n') + '\r\n';
   }
 
+  // Tipos de filtro que um relatório pode ter (a tela que pede pra escolher antes de rodar o
+  // relatório, dentro do sistema Ativo — não confundir com as colunas do resultado).
+  const TIPOS_FILTRO = {
+    texto: 'Texto',
+    numero: 'Número',
+    data: 'Data',
+    periodo: 'Período (de / até)',
+    lista: 'Lista (escolhe uma opção)',
+    lista_multipla: 'Lista (escolhe várias opções)',
+  };
+
+  // Limpa e valida a lista de filtros de um relatório: nome obrigatório e único, tipo dentro
+  // dos conhecidos (senão vira "texto"), e opções só ficam guardadas nos tipos de lista.
+  function limparFiltros(lista) {
+    if (!Array.isArray(lista)) return [];
+    const vistos = new Set();
+    const saida = [];
+    for (const f of lista) {
+      if (!f) continue;
+      const nome = String(f.nome || '').replace(/\s+/g, ' ').trim();
+      if (!nome) continue;
+      const chave = normalizarBusca(nome);
+      if (vistos.has(chave)) continue; // não duplica filtro com o mesmo nome
+      vistos.add(chave);
+      const tipo = TIPOS_FILTRO[f.tipo] ? f.tipo : 'texto';
+      const item = { nome, tipo };
+      if (tipo === 'lista' || tipo === 'lista_multipla') {
+        const opcoes = Array.isArray(f.opcoes) ? f.opcoes.map((o) => String(o).replace(/\s+/g, ' ').trim()).filter(Boolean) : [];
+        item.opcoes = [...new Set(opcoes)];
+      }
+      saida.push(item);
+    }
+    return saida;
+  }
+
+  // Junta os filtros novos com os que o relatório já tinha: filtro com o mesmo nome é atualizado
+  // (troca tipo/opções pelo novo), nome que não existia ainda é adicionado, e o que já existia
+  // e não veio na lista nova continua do jeitinho que estava.
+  function mesclarFiltros(existentes, novos) {
+    const base = Array.isArray(existentes) ? existentes.slice() : [];
+    if (!Array.isArray(novos) || !novos.length) return base;
+    const indice = new Map(base.map((f, i) => [normalizarBusca(f.nome), i]));
+    for (const novo of novos) {
+      const chave = normalizarBusca(novo.nome);
+      if (indice.has(chave)) base[indice.get(chave)] = novo;
+      else {
+        base.push(novo);
+        indice.set(chave, base.length - 1);
+      }
+    }
+    return base;
+  }
+
   return {
     semAcento,
     limparNomeColuna,
@@ -223,5 +276,8 @@
     pesquisar,
     colunasSimilares,
     gerarCSV,
+    TIPOS_FILTRO,
+    limparFiltros,
+    mesclarFiltros,
   };
 });

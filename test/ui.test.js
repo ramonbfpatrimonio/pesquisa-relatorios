@@ -109,8 +109,8 @@ test('abre na aba Pesquisar com o menu protegido escondido e a lista de colunas 
   const a = await abrirApp();
   assert.deepEqual(a.todos('#abas button').map((b) => b.textContent), ['Pesquisar']);
   assert.equal(a.doc.querySelector('#abas [aria-current="page"]').textContent, 'Pesquisar');
-  const segmentos = a.todos('.segmentos button').map((b) => b.textContent);
-  assert.deepEqual(segmentos, ['Todos841', 'ATIVO_ADM90', 'ATIVO_LOG339', 'ATIVO_LOG_EFD13', 'ATIVO_INT159', 'ATIVO_COM201', 'ATIVO_COM_EFD18', 'ATIVO_WMS21', 'ATIVO_ECD0']);
+  const segmentos = a.todos('.segmento-linha').map((l) => l.textContent);
+  assert.deepEqual(segmentos, ['ATIVO_ADM90', 'ATIVO_LOG339', 'ATIVO_LOG_EFD13', 'ATIVO_INT159', 'ATIVO_COM201', 'ATIVO_COM_EFD18', 'ATIVO_WMS21', 'ATIVO_ECD0']);
   assert.match(a.doc.querySelector('.vazio-pesquisa h1').textContent, /Quais colunas/);
   assert.equal(a.todos('.vazio-pesquisa .chip').length, 18);
   a.fechar();
@@ -190,18 +190,32 @@ test('lista de módulos é recolhível e começa fechada', async () => {
   a.fechar();
 });
 
-test('escolher um módulo fecha a lista sozinho e mostra o escolhido na caixa', async () => {
+test('módulo: seleciona vários por checkbox, a lista fica aberta, e "Todos"/"Marcar todos" funcionam', async () => {
   const a = await abrirApp();
   const cabecalho = () => a.doc.querySelector('.modulo-cabecalho');
-  assert.match(cabecalho().textContent, /^Todos/); // começa em "Todos" (estado.modulo = '*')
+  assert.match(cabecalho().textContent, /^Todos/); // começa em "Todos" (nada selecionado)
 
   a.clicar(cabecalho());
   assert.equal(a.doc.querySelector('.segmentos').hidden, false);
-  a.clicar(a.botao('ATIVO_LOG', a.doc.querySelector('.segmentos')));
 
-  assert.equal(a.doc.querySelector('.segmentos').hidden, true, 'a lista fecha sozinha ao escolher');
-  assert.equal(cabecalho().getAttribute('aria-expanded'), 'false');
-  assert.match(cabecalho().textContent, /^ATIVO_LOG/, 'a caixa mostra o módulo escolhido');
+  const caixaDoModulo = (nome) => a.todos('.segmento-linha').find((l) => l.textContent.startsWith(nome)).querySelector('input');
+  a.clicar(caixaDoModulo('ATIVO_LOG'));
+  assert.equal(a.doc.querySelector('.segmentos').hidden, false, 'marcar um checkbox não fecha a lista, dá pra marcar mais de um');
+  assert.match(cabecalho().textContent, /^ATIVO_LOG/, 'com 1 módulo marcado, a caixa mostra o nome dele');
+
+  a.clicar(caixaDoModulo('ATIVO_ADM'));
+  assert.match(cabecalho().textContent, /^2 módulos/, 'com mais de 1 marcado, mostra a quantidade');
+
+  a.clicar(a.botao('Todos', a.doc.querySelector('.segmentos')));
+  assert.match(cabecalho().textContent, /^Todos/);
+  assert.equal(caixaDoModulo('ATIVO_LOG').checked, false);
+
+  a.clicar(a.botao('Marcar todos', a.doc.querySelector('.segmentos')));
+  assert.equal(caixaDoModulo('ATIVO_LOG').checked, true);
+  assert.equal(caixaDoModulo('ATIVO_ECD').checked, true);
+
+  a.clicar(cabecalho());
+  assert.equal(a.doc.querySelector('.segmentos').hidden, true);
   a.fechar();
 });
 
@@ -255,7 +269,8 @@ test('filtrar por módulo e abrir/fechar grupos de resultado pela seta', async (
   a.escolherColuna(picker, 'NF');
   a.escolherColuna(picker, 'SERIE');
 
-  a.clicar(a.botao('ATIVO_LOG_EFD'));
+  a.clicar(a.doc.querySelector('.modulo-cabecalho'));
+  a.clicar(a.todos('.segmento-linha').find((l) => l.textContent.startsWith('ATIVO_LOG_EFD')).querySelector('input'));
   const esperado = B.pesquisar(a.store.db.relatorios, { modulo: 'ATIVO_LOG_EFD', colunas: ['NF', 'SERIE'] });
   assert.ok(a.todos('.rel-modulo').every((m) => m.textContent === 'ATIVO_LOG_EFD'));
 
@@ -287,7 +302,8 @@ test('sem resultado: mensagem clara; limpar colunas volta ao começo', async () 
   const a = await abrirApp();
   const picker = a.doc.querySelector('.picker');
   a.escolherColuna(picker, 'NF');
-  a.clicar(a.botao('ATIVO_ECD')); // módulo vazio
+  a.clicar(a.doc.querySelector('.modulo-cabecalho'));
+  a.clicar(a.todos('.segmento-linha').find((l) => l.textContent.startsWith('ATIVO_ECD')).querySelector('input')); // módulo vazio
   assert.match(a.doc.querySelector('.resultados h1').textContent, /Nenhum relatório tem essas colunas/);
   a.clicar(a.botao('Limpar colunas'));
   assert.ok(a.doc.querySelector('.vazio-pesquisa'));
@@ -545,6 +561,102 @@ test('editar relatório existente carrega a funcionalidade já salva no campo do
   a.clicar(a.botao('Relatório Editável'));
   const m = a.modal();
   assert.equal(m.querySelector('#campo-funcionalidade').value, 'Texto original.');
+  a.fechar();
+});
+
+test('filtros do relatório: cria pelo editor do modal, salva, edita de novo e carrega os valores', async () => {
+  const a = await abrirApp();
+  await a.aba('Relatórios');
+  a.clicar(a.botao('Novo relatório'));
+  let m = a.modal();
+  a.digitar(m.querySelector('#campo-nome'), 'Relatório Com Filtros');
+  m.querySelector('#campo-modulo').value = 'ATIVO_ECD';
+  a.escolherColuna(m.querySelector('.picker'), 'coluna_teste_filtro');
+
+  const linhas = () => a.todos('.filtro-linha', m);
+  a.clicar(a.botao('+ Adicionar filtro', m));
+  let linha1 = linhas()[0];
+  a.digitar(linha1.querySelector('input'), 'Cliente');
+
+  a.clicar(a.botao('+ Adicionar filtro', m));
+  let linha2 = linhas()[1];
+  a.digitar(linha2.querySelectorAll('input')[0], 'Situacao');
+  const selTipo = linha2.querySelector('select');
+  selTipo.value = 'lista';
+  selTipo.dispatchEvent(new a.w.Event('change', { bubbles: true }));
+  assert.equal(linha2.querySelector('.filtro-linha-opcoes').hidden, false, 'campo de opções aparece só pra tipo lista');
+  a.digitar(linha2.querySelectorAll('input')[1], 'Aberto, Fechado , Pendente');
+
+  a.clicar(a.botao('Salvar', m));
+  await esperar(() => !a.modal());
+
+  const criado = a.store.db.relatorios.find((r) => r.nome === 'Relatório Com Filtros');
+  assert.deepEqual(criado.filtros, [
+    { nome: 'Cliente', tipo: 'texto' },
+    { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado', 'Pendente'] },
+  ]);
+
+  // reabre e confere que os valores voltam certinho no editor
+  a.clicar(a.botao('Relatório Com Filtros'));
+  m = a.modal();
+  const linhasReabertas = a.todos('.filtro-linha', m);
+  assert.equal(linhasReabertas.length, 2);
+  assert.equal(linhasReabertas[0].querySelector('input').value, 'Cliente');
+  assert.equal(linhasReabertas[1].querySelectorAll('input')[1].value, 'Aberto, Fechado, Pendente');
+  a.fechar();
+});
+
+test('painel "Ver filtros" mostra os campos reproduzidos (texto, período, lista)', async () => {
+  const a = await abrirApp();
+  a.store.salvarRelatorio({
+    nome: 'Relatório Com Filtros Pra Ver',
+    modulo: 'ATIVO_ECD',
+    colunas: ['coluna_ver_filtro'],
+    filtros: [
+      { nome: 'Cliente', tipo: 'texto' },
+      { nome: 'Emissao', tipo: 'periodo' },
+      { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado'] },
+    ],
+  });
+  await a.aba('Pesquisar');
+  a.escolherColuna(a.doc.querySelector('.picker'), 'coluna_ver_filtro');
+  a.abrirGrupos();
+  await esperar(() => a.botao('Ver filtros'));
+  a.clicar(a.botao('Ver filtros'));
+  await esperar(() => a.modal());
+  const m = a.modal();
+  assert.match(m.textContent, /Relatório Com Filtros Pra Ver/);
+  assert.equal(a.todos('.filtro-mostra', m).length, 3);
+  assert.ok(m.querySelector('.filtro-periodo'), 'período mostra dois campos com "a" no meio');
+  const listaOpcoes = a.todos('.filtro-mostra select option', m).map((o) => o.textContent);
+  assert.deepEqual(listaOpcoes, ['Aberto', 'Fechado']);
+  a.fechar();
+});
+
+test('sem filtros cadastrados, não aparece o botão "Ver filtros"', async () => {
+  const a = await abrirApp();
+  a.escolherColuna(a.doc.querySelector('.picker'), 'VALOR');
+  a.abrirGrupos();
+  await esperar(() => a.doc.querySelector('.rel'));
+  assert.ok(!a.botao('Ver filtros'));
+  a.fechar();
+});
+
+test('módulo: marcar mais de um junta os relatórios dos dois (não é só o primeiro)', async () => {
+  const a = await abrirApp();
+  a.clicar(a.doc.querySelector('.modulo-cabecalho'));
+  a.clicar(a.todos('.segmento-linha').find((l) => l.textContent.startsWith('ATIVO_LOG_EFD')).querySelector('input'));
+  a.clicar(a.todos('.segmento-linha').find((l) => l.textContent.startsWith('ATIVO_WMS')).querySelector('input'));
+
+  const esperado = B.pesquisar(
+    a.store.db.relatorios.filter((r) => r.modulo === 'ATIVO_LOG_EFD' || r.modulo === 'ATIVO_WMS'),
+    { modulo: '*', colunas: ['NF'] }
+  );
+  a.escolherColuna(a.doc.querySelector('.picker'), 'NF');
+  a.abrirGrupos();
+  assert.equal(a.todos('.rel').length, esperado.total);
+  assert.ok(a.todos('.rel-modulo').some((m) => m.textContent === 'ATIVO_LOG_EFD') || esperado.total === 0);
+  assert.ok(a.todos('.rel-modulo').every((m) => m.textContent === 'ATIVO_LOG_EFD' || m.textContent === 'ATIVO_WMS'));
   a.fechar();
 });
 

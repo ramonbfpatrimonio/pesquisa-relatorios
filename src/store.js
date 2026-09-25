@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { limparNomeColuna, semAcento } = require('./busca');
+const { limparNomeColuna, semAcento, limparFiltros, mesclarFiltros } = require('./busca');
 
 const EXTENSOES_IMAGEM = { '.gif': 'image/gif', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.bmp': 'image/bmp' };
 const LIMITE_IMAGEM = 10 * 1024 * 1024;
@@ -67,6 +67,7 @@ function validarBanco(obj) {
     r.imagem = typeof r.imagem === 'string' ? r.imagem : null;
     r.imagemOriginal = typeof r.imagemOriginal === 'string' ? r.imagemOriginal : null;
     r.funcionalidade = typeof r.funcionalidade === 'string' && r.funcionalidade.trim() ? r.funcionalidade.replace(/\s+/g, ' ').trim() : null;
+    r.filtros = limparFiltros(r.filtros);
   }
   obj.versao = obj.versao || 1;
   obj.ignorados = Array.isArray(obj.ignorados) ? obj.ignorados.filter((x) => typeof x === 'string') : [];
@@ -170,6 +171,7 @@ class Store {
     const colunas = unicos((dados.colunas || []).map(limparNomeColuna).filter(Boolean));
     const funcionalidadeTxt = String(dados.funcionalidade || '').replace(/\s+/g, ' ').trim();
     const funcionalidade = funcionalidadeTxt || null;
+    const filtros = limparFiltros(dados.filtros);
 
     const repetido = this.db.relatorios.find(
       (r) => r.id !== dados.id && r.modulo === dados.modulo && nomeComparavel(r.nome) === nomeComparavel(nome)
@@ -179,7 +181,7 @@ class Store {
     if (dados.id) {
       const atual = this.db.relatorios.find((r) => r.id === dados.id);
       if (!atual) throw new Error('Relatório não encontrado. Ele pode ter sido excluído.');
-      Object.assign(atual, { nome, modulo: dados.modulo, colunas, funcionalidade });
+      Object.assign(atual, { nome, modulo: dados.modulo, colunas, funcionalidade, filtros });
     } else {
       this.db.relatorios.push({
         id: 'r' + Date.now().toString(36) + crypto.randomBytes(3).toString('hex'),
@@ -189,6 +191,7 @@ class Store {
         imagem: null,
         imagemOriginal: null,
         funcionalidade,
+        filtros,
       });
     }
     this._gravar();
@@ -452,11 +455,13 @@ class Store {
       }
       const funcionalidadeTxt = String(linha.funcionalidade || '').replace(/\s+/g, ' ').trim();
       const funcionalidade = funcionalidadeTxt || null;
+      const filtros = limparFiltros(linha.filtros);
 
       const existente = this.db.relatorios.find((r) => r.modulo === modulo && nomeComparavel(r.nome) === nomeComparavel(nome));
       if (existente) {
         existente.colunas = colunas;
         if (funcionalidade) existente.funcionalidade = funcionalidade;
+        existente.filtros = mesclarFiltros(existente.filtros, filtros);
         atualizados++;
       } else {
         this.db.relatorios.push({
@@ -467,6 +472,7 @@ class Store {
           imagem: null,
           imagemOriginal: null,
           funcionalidade,
+          filtros,
         });
         novos++;
       }

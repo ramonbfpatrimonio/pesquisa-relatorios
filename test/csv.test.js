@@ -15,6 +15,7 @@ test('analisarCSV lê separado por vírgula, com aspas e ; dentro das colunas', 
     nome: 'Vendas por Vendedor',
     funcionalidade: 'Mostra o total por vendedor.',
     colunas: ['VENDEDOR', 'VALOR', 'DATA'],
+    filtros: [],
     erros: [],
   });
 });
@@ -74,4 +75,19 @@ test('analisarCSV espaço extra no módulo vira _, e o nome do relatório perde 
   const r = Csv.analisarCSV(texto);
   assert.equal(r.linhas[0].modulo, 'ATIVO_COM');
   assert.equal(r.linhas[0].nome, 'Vendas por Dia');
+});
+
+test('analisarCSV lê a coluna FILTROS (Nome:tipo:opcoes, vários separados por ;)', () => {
+  const texto =
+    'MODULO;NOME;COLUNAS;FILTROS\n' +
+    'ATIVO_ADM;Cheques Pendentes;"CHEQUE";"Cliente:texto;Emissao:periodo;Situacao:lista:Aberto,Compensado,Devolvido"\n' +
+    'ATIVO_ADM;Sem Filtros;"CHEQUE";\n';
+  const r = Csv.analisarCSV(texto);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.linhas[0].filtros, [
+    { nome: 'Cliente', tipo: 'texto' },
+    { nome: 'Emissao', tipo: 'periodo' },
+    { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Compensado', 'Devolvido'] },
+  ]);
+  assert.deepEqual(r.linhas[1].filtros, []);
 });

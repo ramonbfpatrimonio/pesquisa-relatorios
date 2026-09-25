@@ -14,7 +14,7 @@
   'use strict';
 
   const CABECALHO_OBRIGATORIO = ['MODULO', 'NOME', 'COLUNAS'];
-  const CABECALHO_TODO = ['MODULO', 'NOME', 'FUNCIONALIDADE', 'COLUNAS'];
+  const CABECALHO_TODO = ['MODULO', 'NOME', 'FUNCIONALIDADE', 'COLUNAS', 'FILTROS'];
 
   // Quebra o texto em linhas x campos respeitando aspas (padrão CSV/RFC 4180):
   // campo com separador, aspas ou quebra de linha dentro vem entre aspas, com "" para escapar aspas.
@@ -85,6 +85,26 @@
       .toUpperCase();
   }
 
+  // Filtros dentro do relatório (a tela que pede antes de rodar, ex.: Cliente, Emissão, Situação —
+  // diferente das colunas do resultado). Sintaxe por filtro: Nome:tipo ou Nome:tipo:opcao1,opcao2,
+  // vários filtros separados por ; . Tipos aceitos ficam em Busca.TIPOS_FILTRO; um tipo desconhecido
+  // vira "texto" mais adiante (na validação do store), aqui só separamos os pedaços.
+  function analisarFiltrosTexto(texto) {
+    const bruto = String(texto || '').trim();
+    if (!bruto) return [];
+    return bruto
+      .split(';')
+      .map((parte) => parte.trim())
+      .filter(Boolean)
+      .map((parte) => {
+        const pedacos = parte.split(':').map((p) => p.trim());
+        const item = { nome: pedacos[0] || '', tipo: (pedacos[1] || 'texto').toLowerCase() };
+        if (pedacos[2]) item.opcoes = pedacos[2].split(',').map((o) => o.trim()).filter(Boolean);
+        return item;
+      })
+      .filter((f) => f.nome);
+  }
+
   function analisarCSV(textoOriginal) {
     let texto = String(textoOriginal || '');
     if (texto.charCodeAt(0) === 0xfeff) texto = texto.slice(1); // BOM do Excel
@@ -122,16 +142,17 @@
         .split(';')
         .map((c) => c.trim())
         .filter(Boolean);
+      const filtros = analisarFiltrosTexto(pega('FILTROS'));
 
       const erros = [];
       if (!modulo) erros.push('faltou o módulo');
       if (!nome) erros.push('faltou o nome do relatório');
       if (!colunas.length) erros.push('faltou pelo menos uma coluna');
 
-      linhas.push({ numeroLinha, modulo, nome, funcionalidade: funcionalidade || null, colunas, erros });
+      linhas.push({ numeroLinha, modulo, nome, funcionalidade: funcionalidade || null, colunas, filtros, erros });
     }
     return { ok: true, separador, linhas };
   }
 
-  return { analisarCSV, CABECALHO_OBRIGATORIO, CABECALHO_TODO };
+  return { analisarCSV, analisarFiltrosTexto, CABECALHO_OBRIGATORIO, CABECALHO_TODO };
 });

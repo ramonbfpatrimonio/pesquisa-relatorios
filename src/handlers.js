@@ -20,9 +20,9 @@ function lerTextoDetectandoCodificacao(caminho) {
 
 const MODELO_CSV_RELATORIOS =
   '\ufeff' +
-  'MODULO;NOME;FUNCIONALIDADE;COLUNAS\r\n' +
-  'ATIVO_LOG;Vendas por Vendedor;Mostra o total vendido por cada vendedor no período.;"VENDEDOR;VALOR;DATA;CLIENTE"\r\n' +
-  'ATIVO_ADM;Cheques Pendentes;;"CHEQUE;BANCO;VENCIMENTO"\r\n';
+  'MODULO;NOME;FUNCIONALIDADE;COLUNAS;FILTROS\r\n' +
+  'ATIVO_LOG;Vendas por Vendedor;Mostra o total vendido por cada vendedor no período.;"VENDEDOR;VALOR;DATA;CLIENTE";"Vendedor:texto;Periodo:periodo"\r\n' +
+  'ATIVO_ADM;Cheques Pendentes;;"CHEQUE;BANCO;VENCIMENTO";"Cliente:texto;Emissao:periodo;Situacao:lista:Aberto,Compensado,Devolvido,Descontado,Garantia,Resgatado"\r\n';
 
 function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, verificarAtualizacoes, baixarAtualizacao, instalarAtualizacao }) {
   // Texto de "o que mudou" dessa versão, editado à mão em data/novidades.txt antes de publicar.

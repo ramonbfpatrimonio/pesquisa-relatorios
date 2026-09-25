@@ -97,3 +97,31 @@ test('gerarCSV usa ; e aspas quando preciso', () => {
 test('limparNomeColuna padroniza espaços e caixa', () => {
   assert.equal(B.limparNomeColuna('  valor   total '), 'VALOR TOTAL');
 });
+
+test('mesclarFiltros: atualiza quem já existe (pelo nome), adiciona quem é novo, mantém quem não foi mencionado', () => {
+  const existentes = [
+    { nome: 'Cliente', tipo: 'texto' },
+    { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado'] },
+  ];
+  const novos = [
+    { nome: 'situacao', tipo: 'lista', opcoes: ['Aberto', 'Compensado', 'Devolvido'] }, // mesmo nome (case diferente) -> atualiza
+    { nome: 'Periodo', tipo: 'periodo' }, // novo -> adiciona
+  ];
+  const r = B.mesclarFiltros(existentes, novos);
+  assert.deepEqual(r, [
+    { nome: 'Cliente', tipo: 'texto' }, // não foi mencionado, continua igual
+    { nome: 'situacao', tipo: 'lista', opcoes: ['Aberto', 'Compensado', 'Devolvido'] }, // atualizado
+    { nome: 'Periodo', tipo: 'periodo' }, // adicionado
+  ]);
+});
+
+test('mesclarFiltros: lista de novos vazia devolve os existentes sem mudar nada', () => {
+  const existentes = [{ nome: 'Cliente', tipo: 'texto' }];
+  assert.deepEqual(B.mesclarFiltros(existentes, []), existentes);
+  assert.deepEqual(B.mesclarFiltros(undefined, []), []);
+});
+
+test('mesclarFiltros: sem filtros existentes, os novos viram a lista inteira', () => {
+  const novos = [{ nome: 'Cliente', tipo: 'texto' }];
+  assert.deepEqual(B.mesclarFiltros(null, novos), novos);
+});

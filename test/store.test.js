@@ -285,3 +285,93 @@ test('excluirModulo tira o módulo excluído da lista de ocultos também', () =>
   store.excluirModulo('SO_PRA_ESCONDER');
   assert.ok(!store.db.modulosOcultos.includes('SO_PRA_ESCONDER'));
 });
+
+test('salvarRelatorio grava e valida os filtros: tipo desconhecido vira texto, sem nome some, opções só em lista', () => {
+  const { store } = novoStore();
+  store.salvarRelatorio({
+    nome: 'Com Filtros',
+    modulo: 'ATIVO_ECD',
+    colunas: ['A'],
+    filtros: [
+      { nome: 'Cliente', tipo: 'texto' },
+      { nome: '  ', tipo: 'texto' }, // sem nome, some
+      { nome: 'Data Emissao', tipo: 'tipo-inventado' }, // vira texto
+      { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Aberto', ' Fechado '] },
+      { nome: 'Cliente', tipo: 'numero' }, // nome repetido, ignora a segunda
+    ],
+  });
+  const criado = store.db.relatorios.find((r) => r.nome === 'Com Filtros');
+  assert.deepEqual(criado.filtros, [
+    { nome: 'Cliente', tipo: 'texto' },
+    { nome: 'Data Emissao', tipo: 'texto' },
+    { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado'] },
+  ]);
+
+  // relatório sem filtros vira lista vazia, não undefined
+  store.salvarRelatorio({ nome: 'Sem Filtros', modulo: 'ATIVO_ECD', colunas: ['A'] });
+  assert.deepEqual(store.db.relatorios.find((r) => r.nome === 'Sem Filtros').filtros, []);
+});
+
+test('importarRelatoriosEmLote grava os filtros de cada linha', () => {
+  const { store } = novoStore();
+  const r = store.importarRelatoriosEmLote([
+    { modulo: 'ATIVO_ECD', nome: 'Via Lote', colunas: ['A'], filtros: [{ nome: 'Cliente', tipo: 'texto' }] },
+  ]);
+  assert.equal(r.novos, 1);
+  assert.deepEqual(store.db.relatorios.find((x) => x.nome === 'Via Lote').filtros, [{ nome: 'Cliente', tipo: 'texto' }]);
+});
+
+test('importarRelatoriosEmLote ao atualizar: só mexe nos filtros que vieram na planilha, o resto do que já existia continua', () => {
+  const { store } = novoStore();
+  store.salvarRelatorio({
+    nome: 'Relatorio Existente',
+    modulo: 'ATIVO_ECD',
+    colunas: ['A'],
+    filtros: [
+      { nome: 'Cliente', tipo: 'texto' },
+      { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado'] },
+    ],
+  });
+
+  // reimporta só mencionando LOCAL_DE_ARMAZENAGEM (novo) e Situacao (atualiza as opções) — sem Cliente
+  store.importarRelatoriosEmLote([
+    {
+      modulo: 'ATIVO_ECD',
+      nome: 'Relatorio Existente',
+      colunas: ['A', 'B'],
+      filtros: [
+        { nome: 'LOCAL_DE_ARMAZENAGEM', tipo: 'texto' },
+        { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Compensado', 'Devolvido'] },
+      ],
+    },
+  ]);
+
+  const atualizado = store.db.relatorios.find((r) => r.nome === 'Relatorio Existente');
+  assert.deepEqual(atualizado.filtros, [
+    { nome: 'Cliente', tipo: 'texto' }, // não foi mencionado no CSV, continua igual
+    { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Compensado', 'Devolvido'] }, // atualizado
+    { nome: 'LOCAL_DE_ARMAZENAGEM', tipo: 'texto' }, // novo, adicionado
+  ]);
+});
+
+test('importarRelatoriosEmLote: célula FILTROS vazia na planilha não apaga os filtros que já existiam', () => {
+  const { store } = novoStore();
+  store.salvarRelatorio({ nome: 'Com Filtro', modulo: 'ATIVO_ECD', colunas: ['A'], filtros: [{ nome: 'Cliente', tipo: 'texto' }] });
+  store.importarRelatoriosEmLote([{ modulo: 'ATIVO_ECD', nome: 'Com Filtro', colunas: ['A', 'B'] }]); // sem "filtros" na linha
+  assert.deepEqual(store.db.relatorios.find((r) => r.nome === 'Com Filtro').filtros, [{ nome: 'Cliente', tipo: 'texto' }]);
+});
+
+test('validarBanco aceita um relatório já com filtros salvos (ex.: vindo de backup antigo)', () => {
+  const { store } = novoStore();
+  fs.writeFileSync(
+    path.join(store.pastaDados, 'relatorios.json'),
+    JSON.stringify({
+      versao: 1,
+      modulos: ['ATIVO_ECD'],
+      relatorios: [{ id: 'r1', modulo: 'ATIVO_ECD', nome: 'X', colunas: ['A'], filtros: [{ nome: 'Cliente', tipo: 'texto' }] }],
+      ignorados: [],
+    })
+  );
+  const reaberto = new Store({ pastaDados: store.pastaDados, pastaBackup: store.pastaBackup, seedPath: path.join(__dirname, '..', 'data', 'seed.json') }).iniciar();
+  assert.deepEqual(reaberto.db.relatorios[0].filtros, [{ nome: 'Cliente', tipo: 'texto' }]);
+});

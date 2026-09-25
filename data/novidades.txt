@@ -1,1 +1,1 @@
-Módulo agora fecha sozinho ao escolher e mostra o selecionado na caixa. Colunas em ordem alfabética ao abrir a lista. Ícone de novidades ao lado da versão.
+Novo: filtros do relatório (manual ou por CSV) e seleção de vários módulos na pesquisa de uma vez.

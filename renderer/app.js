@@ -7,7 +7,7 @@
     db: null,
     info: null,
     aba: 'pesquisar',
-    modulo: '*',
+    modulosSelecionados: new Set(),
     colunas: [],
     gruposAbertos: new Set(),
     moduloAberto: false,
@@ -173,7 +173,7 @@
 
   function atualizarBanco(db) {
     estado.db = db;
-    if (estado.modulo !== '*' && !db.modulos.includes(estado.modulo)) estado.modulo = '*';
+    estado.modulosSelecionados = new Set([...estado.modulosSelecionados].filter((m) => db.modulos.includes(m)));
     if (estado.relModulo !== '*' && !db.modulos.includes(estado.relModulo)) estado.relModulo = '*';
   }
 
@@ -458,6 +458,57 @@
     };
   }
 
+  // Editor dos filtros de um relatório (os campos que aparecem antes de rodar, tipo Cliente/
+  // Emissão/Situação) — uma linha por filtro: nome, tipo, e opções só quando o tipo é lista.
+  function criarEditorFiltros(iniciais) {
+    const linhasEl = h('div', { class: 'filtros-editor-linhas' });
+    const registros = [];
+
+    function criarLinha(valores) {
+      const v = valores || {};
+      const campoNome = h('input', { type: 'text', placeholder: 'Nome do filtro (ex.: Cliente)', 'aria-label': 'Nome do filtro', value: v.nome || '' });
+      const campoTipo = h('select', { 'aria-label': 'Tipo do filtro' }, Object.entries(B.TIPOS_FILTRO).map(([valor, rotulo]) => h('option', { value: valor }, rotulo)));
+      campoTipo.value = B.TIPOS_FILTRO[v.tipo] ? v.tipo : 'texto';
+      const campoOpcoes = h('input', { type: 'text', placeholder: 'Opções separadas por vírgula (ex.: Aberto, Fechado)', 'aria-label': 'Opções da lista', value: (v.opcoes || []).join(', ') });
+      const blocoOpcoes = h('div', { class: 'filtro-linha-opcoes' }, campoOpcoes);
+      const ehLista = () => campoTipo.value === 'lista' || campoTipo.value === 'lista_multipla';
+      const atualizarOpcoesVisiveis = () => { blocoOpcoes.hidden = !ehLista(); };
+      campoTipo.addEventListener('change', atualizarOpcoesVisiveis);
+      atualizarOpcoesVisiveis();
+      const botaoRemover = h(
+        'button',
+        { type: 'button', class: 'btn pequeno discreto', 'aria-label': 'Remover este filtro', onclick: () => { linha.remove(); registros.splice(registros.indexOf(registro), 1); } },
+        '× Remover'
+      );
+      const linha = h('div', { class: 'filtro-linha' }, campoNome, campoTipo, blocoOpcoes, botaoRemover);
+      const registro = { nome: campoNome, tipo: campoTipo, opcoes: campoOpcoes };
+      registros.push(registro);
+      linhasEl.append(linha);
+    }
+
+    (iniciais || []).forEach(criarLinha);
+
+    const botaoAdicionar = h('button', { type: 'button', class: 'btn pequeno', onclick: () => criarLinha() }, '+ Adicionar filtro');
+
+    return {
+      el: h('div', { class: 'filtros-editor' }, linhasEl, botaoAdicionar),
+      valores() {
+        return registros
+          .map((r) => {
+            const nome = r.nome.value.replace(/\s+/g, ' ').trim();
+            if (!nome) return null;
+            const tipo = r.tipo.value;
+            const item = { nome, tipo };
+            if (tipo === 'lista' || tipo === 'lista_multipla') {
+              item.opcoes = r.opcoes.value.split(',').map((o) => o.trim()).filter(Boolean);
+            }
+            return item;
+          })
+          .filter(Boolean);
+      },
+    };
+  }
+
   // ---------- abas ----------
 
   function montarAbas() {
@@ -549,14 +600,16 @@
   }
   function relatoriosNaPesquisa() {
     const ocultos = estado.db.modulosOcultos || [];
-    if (!ocultos.length) return estado.db.relatorios;
-    const ocultosSet = new Set(ocultos);
-    return estado.db.relatorios.filter((r) => !ocultosSet.has(r.modulo));
+    let lista = ocultos.length ? estado.db.relatorios.filter((r) => !new Set(ocultos).has(r.modulo)) : estado.db.relatorios;
+    if (estado.modulosSelecionados.size) {
+      lista = lista.filter((r) => estado.modulosSelecionados.has(r.modulo));
+    }
+    return lista;
   }
 
   function renderPesquisa(alvo) {
     ui = {};
-    ui.segmentos = h('div', { class: 'segmentos', role: 'group', 'aria-label': 'Módulo' });
+    ui.segmentos = h('div', { class: 'segmentos', role: 'group', 'aria-label': 'Módulos' });
     ui.segmentos.hidden = !estado.moduloAberto;
     ui.rotuloModulo = h('span', { class: 'rotulo' }, '');
     ui.moduloCabecalho = h(
@@ -575,7 +628,7 @@
       h('span', { class: 'grupo-seta', 'aria-hidden': 'true' }, '▾')
     );
     ui.picker = criarPicker({
-      opcoes: () => B.colunasDoEscopo(relatoriosNaPesquisa(), estado.modulo),
+      opcoes: () => B.colunasDoEscopo(relatoriosNaPesquisa(), '*'),
       valores: estado.colunas,
       placeholder: 'Digite parte do nome da coluna',
       rotulo: 'Colunas que o relatório precisa ter',
@@ -614,31 +667,54 @@
     atualizarPesquisa();
   }
 
+  // Rótulo da caixa fechada: "Todos", o nome do único escolhido, ou "N módulos".
+  function rotuloModuloAtual() {
+    const n = estado.modulosSelecionados.size;
+    if (!n) return 'Todos';
+    if (n === 1) return [...estado.modulosSelecionados][0];
+    return `${n} módulos`;
+  }
+
   function desenharSegmentos() {
-    const base = relatoriosNaPesquisa();
-    const contar = (m) => base.filter((r) => m === '*' || r.modulo === m).length;
-    ui.rotuloModulo.textContent = estado.modulo === '*' ? 'Todos' : estado.modulo;
+    const ocultos = new Set(estado.db.modulosOcultos || []);
+    const semOcultos = ocultos.size ? estado.db.relatorios.filter((r) => !ocultos.has(r.modulo)) : estado.db.relatorios;
+    const contar = (m) => semOcultos.filter((r) => r.modulo === m).length;
+    ui.rotuloModulo.textContent = rotuloModuloAtual();
     ui.segmentos.replaceChildren(
-      ...['*', ...modulosNaPesquisa()].map((m) =>
+      h(
+        'div',
+        { class: 'segmentos-acoes' },
+        h('button', { type: 'button', class: 'btn discreto pequeno', onclick: () => { estado.modulosSelecionados.clear(); estado.gruposAbertos.clear(); atualizarPesquisa(); } }, 'Todos'),
         h(
           'button',
           {
             type: 'button',
-            'aria-pressed': String(estado.modulo === m),
-            onclick: () => {
-              estado.modulo = m;
+            class: 'btn discreto pequeno',
+            onclick: () => { estado.modulosSelecionados = new Set(modulosNaPesquisa()); estado.gruposAbertos.clear(); atualizarPesquisa(); },
+          },
+          'Marcar todos'
+        )
+      ),
+      ...modulosNaPesquisa().map((m) => {
+        const id = 'seg-modulo-' + m;
+        return h(
+          'label',
+          { class: 'checkbox-linha segmento-linha', for: id },
+          h('input', {
+            type: 'checkbox',
+            id,
+            checked: estado.modulosSelecionados.has(m),
+            onchange: (e) => {
+              if (e.target.checked) estado.modulosSelecionados.add(m);
+              else estado.modulosSelecionados.delete(m);
               estado.gruposAbertos.clear();
-              // depois de escolher, fecha a lista e mostra o módulo escolhido na caixa (igual um <select>)
-              estado.moduloAberto = false;
-              ui.segmentos.hidden = true;
-              ui.moduloCabecalho.setAttribute('aria-expanded', 'false');
               atualizarPesquisa();
             },
-          },
-          h('span', {}, m === '*' ? 'Todos' : m),
+          }),
+          h('span', {}, m),
           h('small', {}, contar(m))
-        )
-      )
+        );
+      })
     );
   }
 
@@ -646,7 +722,7 @@
 
   function atualizarPesquisa() {
     desenharSegmentos();
-    const resultado = B.pesquisar(relatoriosNaPesquisa(), { modulo: estado.modulo, colunas: estado.colunas });
+    const resultado = B.pesquisar(relatoriosNaPesquisa(), { modulo: '*', colunas: estado.colunas });
     ultimoResultado = resultado;
 
     ui.limpar.disabled = !estado.colunas.length;
@@ -656,11 +732,14 @@
   }
 
   function nomeEscopo() {
-    return estado.modulo === '*' ? 'todos os módulos' : estado.modulo;
+    const n = estado.modulosSelecionados.size;
+    if (!n) return 'todos os módulos';
+    if (n === 1) return [...estado.modulosSelecionados][0];
+    return `${n} módulos escolhidos`;
   }
 
   function vazioPesquisa() {
-    const comuns = B.colunasDoEscopo(relatoriosNaPesquisa(), estado.modulo).slice(0, 18);
+    const comuns = B.colunasDoEscopo(relatoriosNaPesquisa(), '*').slice(0, 18);
     return h(
       'div',
       { class: 'vazio-pesquisa' },
@@ -714,6 +793,42 @@
     return container;
   }
 
+  // Mostra os filtros do relatório (a telinha do sistema antes de rodar) reproduzidos na tela,
+  // só pra consulta — não está ligado a nenhum banco de dados de verdade.
+  function campoFiltroMostra(f) {
+    if (f.tipo === 'periodo') {
+      return h(
+        'div',
+        { class: 'filtro-periodo' },
+        h('input', { type: 'text', disabled: true, placeholder: 'dd/mm/aaaa' }),
+        h('span', {}, 'a'),
+        h('input', { type: 'text', disabled: true, placeholder: 'dd/mm/aaaa' })
+      );
+    }
+    if (f.tipo === 'data') return h('input', { type: 'text', disabled: true, placeholder: 'dd/mm/aaaa' });
+    if (f.tipo === 'numero') return h('input', { type: 'text', disabled: true, placeholder: '0' });
+    if (f.tipo === 'lista' || f.tipo === 'lista_multipla') {
+      const tam = String(Math.min(6, Math.max(3, (f.opcoes || []).length || 1)));
+      return h(
+        'select',
+        { multiple: f.tipo === 'lista_multipla', disabled: true, size: tam },
+        (f.opcoes && f.opcoes.length ? f.opcoes : ['(sem opções cadastradas)']).map((o) => h('option', {}, o))
+      );
+    }
+    return h('input', { type: 'text', disabled: true });
+  }
+
+  function abrirFiltrosRelatorio(rel) {
+    abrirModal({
+      titulo: `Filtros de ${rel.nome}`,
+      corpo: [
+        h('p', { class: 'ajuda' }, 'Assim aparecem os filtros dentro do relatório, no sistema. É só pra consulta — não filtra nada de verdade aqui.'),
+        ...rel.filtros.map((f) => h('div', { class: 'filtro-mostra' }, h('span', { class: 'rotulo' }, f.nome), campoFiltroMostra(f))),
+      ],
+      acoes: [{ rotulo: 'Fechar', tipo: 'primario' }],
+    });
+  }
+
   function linhaRelatorio(item, escolhidas) {
     const { rel } = item;
     return h(
@@ -724,7 +839,8 @@
         { class: 'rel-topo' },
         h('span', { class: 'rel-nome' }, rel.nome),
         h('span', { class: 'rel-modulo' }, rel.modulo),
-        rel.imagem ? h('button', { type: 'button', class: 'btn discreto pequeno', onclick: () => verImagem(rel) }, 'Ver tela do filtro') : null
+        rel.imagem ? h('button', { type: 'button', class: 'btn discreto pequeno', onclick: () => verImagem(rel) }, 'Ver tela do filtro') : null,
+        rel.filtros && rel.filtros.length ? h('button', { type: 'button', class: 'btn discreto pequeno', onclick: () => abrirFiltrosRelatorio(rel) }, 'Ver filtros') : null
       ),
       rel.colunas.length ? chipsDeColunas(rel, escolhidas) : h('p', { class: 'rel-sem-colunas' }, 'Sem colunas cadastradas.'),
       rel.funcionalidade
@@ -763,7 +879,7 @@
     let subtitulo = null;
     if (!resultado.total) {
       titulo = 'Nenhum relatório tem essas colunas';
-      subtitulo = `Tire alguma coluna${estado.modulo === '*' ? '' : ' ou pesquise em Todos os módulos'} para ampliar a busca.`;
+      subtitulo = `Tire alguma coluna${estado.modulosSelecionados.size === 0 ? '' : ' ou pesquise em Todos os módulos'} para ampliar a busca.`;
     } else if (melhor.acertos === n) {
       const q = melhor.itens.length;
       titulo = `${q} ${q === 1 ? 'relatório tem' : 'relatórios têm'} ${n === 1 ? 'a coluna escolhida' : `todas as ${n} colunas`}`;
@@ -941,6 +1057,8 @@
       value: rel && rel.funcionalidade ? rel.funcionalidade : '',
     });
 
+    const editorFiltros = criarEditorFiltros(rel ? rel.filtros : []);
+
     // Imagem da tela de filtro (só depois que o relatório existe).
     let blocoImagem = null;
     if (!novo) {
@@ -998,6 +1116,13 @@
           campoFuncionalidade,
           h('p', { class: 'ajuda' }, 'Esse texto aparece no ícone de interrogação dos resultados da pesquisa.')
         ),
+        h(
+          'div',
+          {},
+          h('span', { class: 'rotulo' }, 'Filtros do relatório (opcional)'),
+          h('p', { class: 'ajuda' }, 'Os campos que aparecem na telinha do sistema antes de rodar o relatório (ex.: Cliente, Emissão, Situação) — não confundir com as colunas do resultado, acima.'),
+          editorFiltros.el
+        ),
         blocoImagem,
       ],
       acoes: [
@@ -1032,6 +1157,7 @@
               modulo: selModulo.value,
               colunas: picker.valores(),
               funcionalidade: campoFuncionalidade.value,
+              filtros: editorFiltros.valores(),
             });
             if (!r) return false;
             atualizarBanco(r.dados);
@@ -1163,7 +1289,7 @@
                 h(
                   'td',
                   { class: 'acoes' },
-                  h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => { estado.aba = 'pesquisar'; estado.modulo = '*'; estado.colunas = [c.nome]; estado.gruposAbertos.clear(); render(); } }, 'Ver relatórios'),
+                  h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => { estado.aba = 'pesquisar'; estado.modulosSelecionados.clear(); estado.colunas = [c.nome]; estado.gruposAbertos.clear(); render(); } }, 'Ver relatórios'),
                   h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => renomear(c.nome) }, 'Renomear')
                 )
               )
@@ -1240,11 +1366,21 @@
           h('li', {}, h('b', {}, 'MODULO'), ' — o módulo do relatório. Se ainda não existir, é criado sozinho.'),
           h('li', {}, h('b', {}, 'NOME'), ' — o nome do relatório.'),
           h('li', {}, h('b', {}, 'FUNCIONALIDADE'), ' — para que ele serve. Pode deixar em branco.'),
-          h('li', {}, h('b', {}, 'COLUNAS'), ' — todas as colunas do relatório numa célula só, separadas por ponto e vírgula ( ; ).')
+          h('li', {}, h('b', {}, 'COLUNAS'), ' — todas as colunas do relatório numa célula só, separadas por ponto e vírgula ( ; ).'),
+          h('li', {}, h('b', {}, 'FILTROS'), ' — os campos que aparecem na telinha do sistema antes de rodar o relatório (Cliente, Emissão, Situação...). Pode deixar em branco.')
         ),
-        h('p', {}, 'Uma linha por relatório. Se já existir um relatório com o mesmo nome nesse módulo, as colunas e a funcionalidade dele são atualizadas (nada duplica).'),
+        h('p', {}, 'Uma linha por relatório. Se já existir um relatório com o mesmo nome nesse módulo, as colunas são substituídas pelas da planilha; a funcionalidade só muda se vier preenchida. Nos filtros, só os que aparecerem na célula FILTROS são criados ou atualizados — os que o relatório já tinha e não foram mencionados continuam do jeito que estavam.'),
         h('p', { class: 'rotulo' }, 'Exemplo:'),
-        h('pre', { class: 'exemplo-csv' }, 'MODULO;NOME;FUNCIONALIDADE;COLUNAS\nATIVO_LOG;Vendas por Vendedor;Mostra o total vendido por vendedor.;"VENDEDOR;VALOR;DATA;CLIENTE"'),
+        h(
+          'pre',
+          { class: 'exemplo-csv' },
+          'MODULO;NOME;FUNCIONALIDADE;COLUNAS;FILTROS\nATIVO_LOG;Vendas por Vendedor;Mostra o total vendido por vendedor.;"VENDEDOR;VALOR;DATA;CLIENTE";"Vendedor:texto;Periodo:periodo"'
+        ),
+        h(
+          'p',
+          { class: 'ajuda' },
+          'Cada filtro na célula FILTROS é Nome:tipo (ou Nome:tipo:opção1,opção2 para listas), separados por ponto e vírgula. Tipos aceitos: texto, numero, data, periodo, lista, lista_multipla. Exemplo com lista: "Situacao:lista:Aberto,Compensado,Devolvido".'
+        ),
         h('p', { class: 'ajuda' }, 'Pode salvar do Excel com vírgula ou com ponto e vírgula separando as colunas — o programa reconhece sozinho. Se algum texto tiver acento e vier estranho, tente salvar como “CSV UTF-8”.'),
       ],
       acoes: [
@@ -1331,7 +1467,7 @@
           tipo: 'primario',
           desabilitado: !validas.length,
           aoClicar: async () => {
-            const payload = validas.map((l) => ({ modulo: l.modulo, nome: l.nome, funcionalidade: l.funcionalidade, colunas: l.colunas }));
+            const payload = validas.map((l) => ({ modulo: l.modulo, nome: l.nome, funcionalidade: l.funcionalidade, colunas: l.colunas, filtros: l.filtros }));
             const r = await chamar('importarRelatoriosCSV', payload);
             if (!r) return false;
             atualizarBanco(r.dados.db);
@@ -1442,7 +1578,7 @@
                       const r = await chamar('definirModulosOcultos', novosOcultos);
                       if (!r) { e.target.checked = !marcado; return; }
                       atualizarBanco(r.dados);
-                      if (!marcado && estado.modulo === m) estado.modulo = '*'; // não deixa a pesquisa presa num módulo escondido
+                      if (!marcado) estado.modulosSelecionados.delete(m); // não deixa a pesquisa presa num módulo escondido
                       render();
                     },
                   }),

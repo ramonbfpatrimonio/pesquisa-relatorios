@@ -1,7 +1,7 @@
 {
   "name": "pesquisa-relatorios",
   "productName": "Pesquisa de Relatórios",
-  "version": "1.0.7",
+  "version": "1.0.0",
   "description": "Pesquisa de relatórios por colunas, com dados salvos no próprio computador",
   "main": "main.js",
   "author": "Ramon",
