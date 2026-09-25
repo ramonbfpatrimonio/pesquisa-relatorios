@@ -100,10 +100,13 @@
       else if (nome.includes(busca)) ordem = 3;
       if (ordem >= 0) saida.push({ ...op, ordem });
     }
-    // Caixa vazia (acabou de clicar, sem digitar nada): lista em ordem alfabética, não por frequência.
-    // Com busca digitada, o mais relevante primeiro (bate exato > começa com > contém), e frequência só de desempate.
-    if (!busca) saida.sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
-    else saida.sort((a, b) => a.ordem - b.ordem || b.qtd - a.qtd || a.nome.localeCompare(b.nome, 'pt'));
+    // Caixa vazia (acabou de clicar, sem digitar nada): lista em ordem alfabética, não por frequência,
+    // e sem cortar em 40 — senão módulos com muitas colunas escondem tudo depois de "C" ou "D" (o menu já rola).
+    if (!busca) {
+      saida.sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+      return saida.map(({ nome, qtd }) => ({ nome, qtd }));
+    }
+    saida.sort((a, b) => a.ordem - b.ordem || b.qtd - a.qtd || a.nome.localeCompare(b.nome, 'pt'));
     return saida.slice(0, max).map(({ nome, qtd }) => ({ nome, qtd }));
   }
 

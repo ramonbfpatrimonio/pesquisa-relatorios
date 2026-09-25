@@ -1,5 +1,3 @@
 |MUDANÇAS|
-
-1- Escolher um módulo, fecha a lista sozinha e mostra o nome escolhido na caixa (em vez de continuar dizendo "Módulo").
-
-2- Colunas em ordem alfabética ao abrir a caixa vazia — antes de digitar qualquer coisa, a lista vem A→Z. Continua ordenando por relevância quando você digita algo pra buscar.
+-
+Corrigido: em alguns módulos, ao clicar na caixa de colunas sem digitar nada, a lista aparecia incompleta (parava por volta da letra "C"). Agora aparecem todas as colunas do módulo, é só rolar a lista pra achar a que você precisa.
