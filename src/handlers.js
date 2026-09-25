@@ -48,6 +48,7 @@ function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, 
     excluirRelatorio: (id) => store.excluirRelatorio(id),
     adicionarModulo: (nome) => store.adicionarModulo(nome),
     excluirModulo: (nome) => store.excluirModulo(nome),
+    definirModulosOcultos: (nomes) => store.definirModulosOcultos(nomes),
     renomearColuna: (de, para) => store.renomearColuna(de, para),
     ignorarSimilar: (chave) => store.ignorarSimilar(chave),
 

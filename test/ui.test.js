@@ -132,6 +132,48 @@ test('ícone de novidades ao lado da versão mostra o texto de data/novidades.tx
   a.fechar();
 });
 
+test('barra de rolagem do menu de colunas não fecha o menu (mousedown é cancelado)', async () => {
+  const a = await abrirApp();
+  const entrada = a.doc.querySelector('.picker input');
+  a.digitar(entrada, ''); // abre o menu (foco já abre, mas garante)
+  entrada.dispatchEvent(new a.w.Event('focus'));
+  const menu = a.doc.querySelector('.picker-menu');
+  const evento = new a.w.MouseEvent('mousedown', { bubbles: true, cancelable: true });
+  menu.dispatchEvent(evento);
+  assert.equal(evento.defaultPrevented, true, 'mousedown no menu precisa ser cancelado, senão o campo perde o foco e o menu fecha');
+  a.fechar();
+});
+
+test('Configurações: esconder um módulo tira ele da lista de Pesquisar, some da busca e fica salvo', async () => {
+  const a = await abrirApp();
+  await a.aba('Configurações');
+  await esperar(() => a.doc.querySelector('.checkbox-linha'));
+
+  const antes = a.todos('.checkbox-linha').length;
+  assert.equal(antes, a.store.db.modulos.length);
+
+  const linhaLog = a.todos('.checkbox-linha').find((l) => l.textContent.trim() === 'ATIVO_LOG');
+  assert.ok(linhaLog);
+  const caixa = linhaLog.querySelector('input[type="checkbox"]');
+  assert.equal(caixa.checked, true);
+  caixa.checked = false;
+  caixa.dispatchEvent(new a.w.Event('change', { bubbles: true }));
+  await esperar(() => a.store.db.modulosOcultos.includes('ATIVO_LOG'));
+
+  await a.aba('Pesquisar');
+  const nomesModulo = a.todos('.segmentos button span:first-child').map((s) => s.textContent);
+  assert.ok(!nomesModulo.includes('ATIVO_LOG'), 'módulo escondido não aparece mais na lista de Pesquisar');
+
+  // some da busca em "Todos" também, não só da lista
+  const totalAntes = B.pesquisar(a.store.db.relatorios, { modulo: '*', colunas: ['NF'] }).total;
+  a.escolherColuna(a.doc.querySelector('.picker'), 'NF');
+  a.abrirGrupos();
+  const totalNaTela = a.todos('.rel').length;
+  assert.ok(totalNaTela < totalAntes, 'relatórios do módulo escondido não aparecem mais nem pesquisando em Todos');
+
+  a.fechar();
+});
+
 test('lista de módulos é recolhível e começa fechada', async () => {
   const a = await abrirApp();
   const cabecalho = a.doc.querySelector('.modulo-cabecalho');
@@ -268,7 +310,7 @@ test('digitar no campo sugere colunas; setas e Enter escolhem; Backspace remove 
   a.fechar();
 });
 
-test('menu protegido: Ctrl+Shift+B pede senha para liberar Relatórios, Colunas e Dados e backup', async () => {
+test('menu protegido: Ctrl+Shift+B pede senha para liberar Relatórios, Colunas e Configurações', async () => {
   const a = await abrirApp();
   assert.deepEqual(a.todos('#abas button').map((b) => b.textContent), ['Pesquisar']);
 
@@ -284,7 +326,7 @@ test('menu protegido: Ctrl+Shift+B pede senha para liberar Relatórios, Colunas 
 
   // senha certa libera os três menus
   await a.destravarMenu();
-  assert.deepEqual(a.todos('#abas button').map((b) => b.textContent), ['Pesquisar', 'Relatórios', 'Colunas', 'Dados e backup']);
+  assert.deepEqual(a.todos('#abas button').map((b) => b.textContent), ['Pesquisar', 'Relatórios', 'Colunas', 'Configurações']);
 
   // apertar de novo esconde, sem pedir senha, e volta para Pesquisar se estiver em outra aba
   await a.aba('Relatórios');
@@ -508,7 +550,7 @@ test('editar relatório existente carrega a funcionalidade já salva no campo do
 
 test('aba Dados: mostra caminhos, faz backup manual e restaura', async () => {
   const a = await abrirApp();
-  await a.aba('Dados e backup');
+  await a.aba('Configurações');
   await esperar(() => a.doc.querySelector('.tabela'));
   assert.ok(a.doc.body.textContent.includes(a.store.pastaDados));
   assert.ok(a.doc.body.textContent.includes(a.store.pastaBackup));
@@ -561,7 +603,7 @@ test('atualização: sem versão nova ou com erro, não incomoda com banner', as
 
 test('atualização: botão manual na aba Dados avisa quando é modo de desenvolvimento', async () => {
   const a = await abrirApp();
-  await a.aba('Dados e backup');
+  await a.aba('Configurações');
   await esperar(() => a.botao('Verificar atualizações'));
   a.clicar(a.botao('Verificar atualizações'));
   await esperar(() => a.todos('.aviso').some((el) => /modo de desenvolvimento/.test(el.textContent)));
@@ -596,7 +638,7 @@ test('importar relatórios por CSV: guia de formato, prévia com novo/atualiza/e
     `${existente.modulo};${existente.nome};Atualizado pelo CSV.;"COL_ATUALIZADA"\n`;
   fs.writeFileSync(arquivo, conteudo, 'utf8');
 
-  await a.aba('Dados e backup');
+  await a.aba('Configurações');
   await esperar(() => a.botao('Importar relatórios (CSV)'));
   a.clicar(a.botao('Importar relatórios (CSV)'));
   await esperar(() => a.modal());
@@ -640,7 +682,7 @@ test('importar relatórios por CSV: arquivo com cabeçalho errado mostra aviso e
   fs.writeFileSync(arquivo, 'A,B,C\n1,2,3\n', 'utf8');
 
   const a = await abrirApp({ abrirCSV: async () => arquivo });
-  await a.aba('Dados e backup');
+  await a.aba('Configurações');
   await esperar(() => a.botao('Importar relatórios (CSV)'));
   a.clicar(a.botao('Importar relatórios (CSV)'));
   await esperar(() => a.modal());
@@ -655,7 +697,7 @@ test('importar relatórios por CSV: botão "Baixar modelo" chama a ação certa'
   const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-csv-modelo-'));
   const destino = path.join(raiz, 'modelo.csv');
   const a = await abrirApp({ salvarCSV: async () => destino });
-  await a.aba('Dados e backup');
+  await a.aba('Configurações');
   await esperar(() => a.botao('Importar relatórios (CSV)'));
   a.clicar(a.botao('Importar relatórios (CSV)'));
   await esperar(() => a.modal());

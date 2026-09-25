@@ -70,6 +70,10 @@ function validarBanco(obj) {
   }
   obj.versao = obj.versao || 1;
   obj.ignorados = Array.isArray(obj.ignorados) ? obj.ignorados.filter((x) => typeof x === 'string') : [];
+  // Módulos escondidos da lista de Pesquisar. É uma preferência de máquina: fica junto dos outros
+  // dados (sobrevive a atualizações do programa, que nunca mexem nesse arquivo), mas se o módulo
+  // foi excluído ou não existe mais, tira ele da lista pra não sobrar lixo.
+  obj.modulosOcultos = Array.isArray(obj.modulosOcultos) ? unicos(obj.modulosOcultos.filter((m) => typeof m === 'string' && obj.modulos.includes(m))) : [];
   obj.atualizadoEm = obj.atualizadoEm || null;
   return obj;
 }
@@ -215,6 +219,15 @@ class Store {
     if (!this.db.modulos.includes(nome)) throw new Error('Módulo não encontrado.');
     if (this.db.relatorios.some((r) => r.modulo === nome)) throw new Error('Só é possível excluir módulos sem relatórios.');
     this.db.modulos = this.db.modulos.filter((m) => m !== nome);
+    this.db.modulosOcultos = this.db.modulosOcultos.filter((m) => m !== nome);
+    this._gravar();
+    return this.db;
+  }
+
+  // Quais módulos ficam escondidos na lista de Pesquisar (preferência salva neste computador).
+  definirModulosOcultos(nomes) {
+    const validos = new Set(this.db.modulos);
+    this.db.modulosOcultos = unicos((nomes || []).filter((m) => typeof m === 'string' && validos.has(m)));
     this._gravar();
     return this.db;
   }

@@ -266,3 +266,22 @@ test('importarRelatoriosEmLote ignora linha inválida (sem quebrar as outras) e 
   assert.ok(!store.db.relatorios.some((x) => x.nome === 'Sem módulo'));
   assert.throws(() => store.importarRelatoriosEmLote([]), /nada para importar/);
 });
+
+test('modulosOcultos começa vazio, só aceita módulos que existem, e sobrevive a reabrir o programa', () => {
+  const { store } = novoStore();
+  assert.deepEqual(store.db.modulosOcultos, []);
+
+  store.definirModulosOcultos(['ATIVO_LOG', 'ATIVO_LOG', 'NAO_EXISTE', 'ATIVO_WMS']);
+  assert.deepEqual(store.db.modulosOcultos.sort(), ['ATIVO_LOG', 'ATIVO_WMS']); // dedupe e ignora módulo inexistente
+
+  const reaberto = new Store({ pastaDados: store.pastaDados, pastaBackup: store.pastaBackup, seedPath: path.join(__dirname, '..', 'data', 'seed.json') }).iniciar();
+  assert.deepEqual(reaberto.db.modulosOcultos.sort(), ['ATIVO_LOG', 'ATIVO_WMS']);
+});
+
+test('excluirModulo tira o módulo excluído da lista de ocultos também', () => {
+  const { store } = novoStore();
+  store.adicionarModulo('SO_PRA_ESCONDER');
+  store.definirModulosOcultos(['SO_PRA_ESCONDER']);
+  store.excluirModulo('SO_PRA_ESCONDER');
+  assert.ok(!store.db.modulosOcultos.includes('SO_PRA_ESCONDER'));
+});

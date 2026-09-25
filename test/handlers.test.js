@@ -146,3 +146,10 @@ test('baixarModeloRelatoriosCSV grava um arquivo de exemplo que a própria plani
   assert.equal(analise.ok, true);
   assert.equal(analise.linhas.length, 2);
 });
+
+test('definirModulosOcultos repassa para o store', async () => {
+  const { handlers, store } = montar();
+  const r = await handlers.definirModulosOcultos(['ATIVO_LOG']);
+  assert.equal(r.ok, true);
+  assert.deepEqual(store.db.modulosOcultos, ['ATIVO_LOG']);
+});

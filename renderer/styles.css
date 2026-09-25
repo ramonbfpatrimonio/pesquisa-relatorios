@@ -380,6 +380,10 @@ table.tabela { width: 100%; border-collapse: collapse; background: var(--superfi
 .numeros { display: flex; gap: 28px; flex-wrap: wrap; margin-top: 10px; }
 .numeros b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
 .numeros span { color: var(--tinta-suave); font-size: 13px; }
+
+.lista-checkbox { display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: 12px; }
+.checkbox-linha { display: flex; align-items: center; gap: 8px; min-width: 180px; cursor: pointer; font-size: 13.5px; }
+.checkbox-linha input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--acento); cursor: pointer; flex: 0 0 auto; }
 .tag { display: inline-block; padding: 0 7px; border-radius: 4px; background: var(--superficie-2); border: 1px solid var(--linha); font-size: 12px; color: var(--tinta-suave); }
 .tag.auto { background: var(--acento-suave); border-color: transparent; color: var(--acento); }
 .tag.perigo { background: var(--perigo-suave); border-color: transparent; color: var(--perigo); }

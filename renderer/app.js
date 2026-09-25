@@ -25,7 +25,7 @@
     ['pesquisar', 'Pesquisar'],
     ['relatorios', 'Relatórios'],
     ['colunas', 'Colunas'],
-    ['dados', 'Dados e backup'],
+    ['dados', 'Configurações'],
   ];
 
   // ---------- utilidades ----------
@@ -329,7 +329,9 @@
       autocomplete: 'off',
       spellcheck: 'false',
     });
-    const menu = h('ul', { class: 'picker-menu', id: idMenu, role: 'listbox', hidden: true });
+    // sem isso, clicar na barra de rolagem tira o foco do campo de texto e o menu fecha na hora,
+    // antes de dar tempo de arrastar pra baixo.
+    const menu = h('ul', { class: 'picker-menu', id: idMenu, role: 'listbox', hidden: true, onmousedown: (e) => e.preventDefault() });
     const caixa = h('div', { class: 'picker-caixa', onclick: () => entrada.focus() }, entrada);
     const raiz = h('div', { class: 'picker' }, caixa, menu);
 
@@ -468,7 +470,7 @@
     );
   }
 
-  // Pede a senha para mostrar Relatórios, Colunas e Dados e backup.
+  // Pede a senha para mostrar Relatórios, Colunas e Configurações.
   function pedirSenha() {
     return new Promise((resolver) => {
       const campo = h('input', { type: 'password', id: 'campo-senha', autocomplete: 'off' });
@@ -483,7 +485,7 @@
         titulo: 'Liberar menus',
         corpo: [
           h('div', {}, h('label', { class: 'rotulo', for: 'campo-senha' }, 'Senha'), campo),
-          h('p', { class: 'ajuda' }, 'Digite a senha para mostrar Relatórios, Colunas e Dados e backup.'),
+          h('p', { class: 'ajuda' }, 'Digite a senha para mostrar Relatórios, Colunas e Configurações.'),
         ],
         aoFechar: () => resolver(null),
         acoes: [
@@ -539,6 +541,19 @@
 
   let ui = {};
 
+  // Módulos e relatórios que entram na pesquisa: tira os que a pessoa escondeu em Configurações
+  // (preferência só deste computador — não mexe nas abas Relatórios/Colunas, só na Pesquisar).
+  function modulosNaPesquisa() {
+    const ocultos = new Set(estado.db.modulosOcultos || []);
+    return estado.db.modulos.filter((m) => !ocultos.has(m));
+  }
+  function relatoriosNaPesquisa() {
+    const ocultos = estado.db.modulosOcultos || [];
+    if (!ocultos.length) return estado.db.relatorios;
+    const ocultosSet = new Set(ocultos);
+    return estado.db.relatorios.filter((r) => !ocultosSet.has(r.modulo));
+  }
+
   function renderPesquisa(alvo) {
     ui = {};
     ui.segmentos = h('div', { class: 'segmentos', role: 'group', 'aria-label': 'Módulo' });
@@ -560,7 +575,7 @@
       h('span', { class: 'grupo-seta', 'aria-hidden': 'true' }, '▾')
     );
     ui.picker = criarPicker({
-      opcoes: () => B.colunasDoEscopo(estado.db.relatorios, estado.modulo),
+      opcoes: () => B.colunasDoEscopo(relatoriosNaPesquisa(), estado.modulo),
       valores: estado.colunas,
       placeholder: 'Digite parte do nome da coluna',
       rotulo: 'Colunas que o relatório precisa ter',
@@ -600,10 +615,11 @@
   }
 
   function desenharSegmentos() {
-    const contar = (m) => estado.db.relatorios.filter((r) => m === '*' || r.modulo === m).length;
+    const base = relatoriosNaPesquisa();
+    const contar = (m) => base.filter((r) => m === '*' || r.modulo === m).length;
     ui.rotuloModulo.textContent = estado.modulo === '*' ? 'Todos' : estado.modulo;
     ui.segmentos.replaceChildren(
-      ...['*', ...estado.db.modulos].map((m) =>
+      ...['*', ...modulosNaPesquisa()].map((m) =>
         h(
           'button',
           {
@@ -630,7 +646,7 @@
 
   function atualizarPesquisa() {
     desenharSegmentos();
-    const resultado = B.pesquisar(estado.db.relatorios, { modulo: estado.modulo, colunas: estado.colunas });
+    const resultado = B.pesquisar(relatoriosNaPesquisa(), { modulo: estado.modulo, colunas: estado.colunas });
     ultimoResultado = resultado;
 
     ui.limpar.disabled = !estado.colunas.length;
@@ -644,7 +660,7 @@
   }
 
   function vazioPesquisa() {
-    const comuns = B.colunasDoEscopo(estado.db.relatorios, estado.modulo).slice(0, 18);
+    const comuns = B.colunasDoEscopo(relatoriosNaPesquisa(), estado.modulo).slice(0, 18);
     return h(
       'div',
       { class: 'vazio-pesquisa' },
@@ -1175,7 +1191,7 @@
     desenharTabela();
   }
 
-  // ---------- aba Dados e backup ----------
+  // ---------- aba Configurações (dados, backup, atualização e módulos da pesquisa) ----------
 
   const TIPOS_BACKUP = {
     auto: 'Automático',
@@ -1392,7 +1408,7 @@
         h(
           'div',
           { class: 'tela-larga' },
-          h('h1', {}, 'Dados e backup'),
+          h('h1', {}, 'Configurações'),
           h('p', { class: 'ajuda' }, 'Tudo fica salvo neste computador. Não é preciso internet nem conta.'),
           h(
             'div',
@@ -1401,6 +1417,39 @@
             h('div', {}, h('b', {}, colunas.size), h('span', {}, 'colunas diferentes')),
             h('div', {}, h('b', {}, estado.db.modulos.length), h('span', {}, 'módulos')),
             h('div', {}, h('b', {}, formatarData(estado.db.atualizadoEm)), h('span', {}, 'última alteração'))
+          ),
+          h(
+            'section',
+            { class: 'painel' },
+            h('h2', {}, 'Módulos na pesquisa'),
+            h('p', { class: 'ajuda' }, 'Desmarque os módulos que você não quer que apareçam na lista de módulos da aba Pesquisar. Fica salvo neste computador e não muda quando o programa atualizar.'),
+            h(
+              'div',
+              { class: 'lista-checkbox' },
+              estado.db.modulos.map((m) => {
+                const id = 'modulo-vis-' + m;
+                const ocultos = new Set(estado.db.modulosOcultos || []);
+                return h(
+                  'label',
+                  { class: 'checkbox-linha', for: id },
+                  h('input', {
+                    type: 'checkbox',
+                    id,
+                    checked: !ocultos.has(m),
+                    onchange: async (e) => {
+                      const marcado = e.target.checked;
+                      const novosOcultos = marcado ? [...ocultos].filter((x) => x !== m) : [...ocultos, m];
+                      const r = await chamar('definirModulosOcultos', novosOcultos);
+                      if (!r) { e.target.checked = !marcado; return; }
+                      atualizarBanco(r.dados);
+                      if (!marcado && estado.modulo === m) estado.modulo = '*'; // não deixa a pesquisa presa num módulo escondido
+                      render();
+                    },
+                  }),
+                  h('span', {}, m)
+                );
+              })
+            )
           ),
           h(
             'section',

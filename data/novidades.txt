@@ -1,3 +1,1 @@
-|MUDANÇAS|
--
-Corrigido: em alguns módulos, ao clicar na caixa de colunas sem digitar nada, a lista aparecia incompleta (parava por volta da letra "C"). Agora aparecem todas as colunas do módulo, é só rolar a lista pra achar a que você precisa.
+Módulo agora fecha sozinho ao escolher e mostra o selecionado na caixa. Colunas em ordem alfabética ao abrir a lista. Ícone de novidades ao lado da versão.

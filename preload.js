@@ -8,6 +8,7 @@ const ACOES = [
   'excluirRelatorio',
   'adicionarModulo',
   'excluirModulo',
+  'definirModulosOcultos',
   'renomearColuna',
   'ignorarSimilar',
   'obterImagem',

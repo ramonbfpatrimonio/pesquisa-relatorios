@@ -56,6 +56,14 @@ test('sugerirColunas com a caixa vazia lista em ordem alfabética, não por freq
   assert.deepEqual(B.sugerirColunas(ops, '').map((o) => o.nome), ['DATA_ULTIMO_PEDIDO', 'MÊS', 'PEDIDO_NUMERO', 'REPEDIDO']);
 });
 
+test('sugerirColunas com a caixa vazia não corta em 40, mesmo com o limite padrão do picker', () => {
+  const muitas = Array.from({ length: 120 }, (_, i) => ({ nome: `COL_${String(i).padStart(3, '0')}`, qtd: 1 }));
+  const r = B.sugerirColunas(muitas, '', new Set(), 40);
+  assert.equal(r.length, 120);
+  assert.equal(r[0].nome, 'COL_000');
+  assert.equal(r[119].nome, 'COL_119');
+});
+
 test('colunasSimilares acha erros de digitação e variações, mas não QUANTIDADE_1 x QUANTIDADE_2', () => {
   const rs = [
     { colunas: ['QUANTIDADE', 'VENDA', '%_VENDA', 'FAMILIA', 'VOLUME', 'QUANTIDADE_1', 'ICMS_ST', 'CNPJ/CPF', 'VALOR'] },
