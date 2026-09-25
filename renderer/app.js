@@ -543,6 +543,7 @@
     ui = {};
     ui.segmentos = h('div', { class: 'segmentos', role: 'group', 'aria-label': 'Módulo' });
     ui.segmentos.hidden = !estado.moduloAberto;
+    ui.rotuloModulo = h('span', { class: 'rotulo' }, '');
     ui.moduloCabecalho = h(
       'button',
       {
@@ -555,7 +556,7 @@
           ui.moduloCabecalho.setAttribute('aria-expanded', String(estado.moduloAberto));
         },
       },
-      h('span', { class: 'rotulo' }, 'Módulo'),
+      ui.rotuloModulo,
       h('span', { class: 'grupo-seta', 'aria-hidden': 'true' }, '▾')
     );
     ui.picker = criarPicker({
@@ -600,6 +601,7 @@
 
   function desenharSegmentos() {
     const contar = (m) => estado.db.relatorios.filter((r) => m === '*' || r.modulo === m).length;
+    ui.rotuloModulo.textContent = estado.modulo === '*' ? 'Todos' : estado.modulo;
     ui.segmentos.replaceChildren(
       ...['*', ...estado.db.modulos].map((m) =>
         h(
@@ -610,6 +612,10 @@
             onclick: () => {
               estado.modulo = m;
               estado.gruposAbertos.clear();
+              // depois de escolher, fecha a lista e mostra o módulo escolhido na caixa (igual um <select>)
+              estado.moduloAberto = false;
+              ui.segmentos.hidden = true;
+              ui.moduloCabecalho.setAttribute('aria-expanded', 'false');
               atualizarPesquisa();
             },
           },
@@ -1505,7 +1511,7 @@
   function esconderPreloader() {
     const preloader = document.getElementById('preloader');
     if (!preloader) return;
-    const minimo = 900;
+    const minimo = 4000;
     const espera = Math.max(0, minimo - (Date.now() - INICIO_CARREGAMENTO));
     setTimeout(() => {
       preloader.classList.add('saiu');
@@ -1523,7 +1529,26 @@
     estado.db = r.dados.db;
     estado.info = r.dados.info;
     const elVersao = document.getElementById('versao-app');
-    if (elVersao) elVersao.textContent = `v${estado.info.versao}`;
+    if (elVersao) {
+      elVersao.replaceChildren(
+        h('span', {}, `v${estado.info.versao}`),
+        estado.info.novidades
+          ? h(
+              'span',
+              {
+                class: 'rel-ajuda',
+                tabindex: '0',
+                'aria-label': `Novidades da versão ${estado.info.versao}: ${estado.info.novidades}`,
+                onmouseenter: (e) => dica.mostrar(e.currentTarget, estado.info.novidades),
+                onmouseleave: () => dica.esconder(),
+                onfocus: (e) => dica.mostrar(e.currentTarget, estado.info.novidades),
+                onblur: () => dica.esconder(),
+              },
+              '?'
+            )
+          : null
+      );
+    }
     montarAbas();
     render();
     esconderPreloader();

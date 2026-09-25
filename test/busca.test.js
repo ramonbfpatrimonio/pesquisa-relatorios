@@ -46,6 +46,16 @@ test('sugerirColunas ordena: exata, começa com, começa palavra, contém; ignor
   assert.equal(B.sugerirColunas(ops, 'a(b').length, 0); // caracteres de regex não quebram
 });
 
+test('sugerirColunas com a caixa vazia lista em ordem alfabética, não por frequência', () => {
+  const ops = [
+    { nome: 'PEDIDO_NUMERO', qtd: 9 },
+    { nome: 'MÊS', qtd: 3 },
+    { nome: 'DATA_ULTIMO_PEDIDO', qtd: 1 },
+    { nome: 'REPEDIDO', qtd: 5 },
+  ];
+  assert.deepEqual(B.sugerirColunas(ops, '').map((o) => o.nome), ['DATA_ULTIMO_PEDIDO', 'MÊS', 'PEDIDO_NUMERO', 'REPEDIDO']);
+});
+
 test('colunasSimilares acha erros de digitação e variações, mas não QUANTIDADE_1 x QUANTIDADE_2', () => {
   const rs = [
     { colunas: ['QUANTIDADE', 'VENDA', '%_VENDA', 'FAMILIA', 'VOLUME', 'QUANTIDADE_1', 'ICMS_ST', 'CNPJ/CPF', 'VALOR'] },

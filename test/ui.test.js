@@ -118,7 +118,17 @@ test('abre na aba Pesquisar com o menu protegido escondido e a lista de colunas 
 
 test('mostra a versão do app no canto inferior esquerdo da barra lateral', async () => {
   const a = await abrirApp();
-  assert.equal(a.doc.querySelector('#versao-app').textContent, 'vteste');
+  assert.equal(a.doc.querySelector('#versao-app').firstChild.textContent, 'vteste');
+  a.fechar();
+});
+
+test('ícone de novidades ao lado da versão mostra o texto de data/novidades.txt', async () => {
+  const a = await abrirApp();
+  const icone = a.doc.querySelector('#versao-app .rel-ajuda');
+  assert.ok(icone, 'deve ter o ícone de novidades (data/novidades.txt tem texto)');
+  const esperado = fs.readFileSync(path.join(__dirname, '..', 'data', 'novidades.txt'), 'utf8').trim();
+  icone.dispatchEvent(new a.w.Event('mouseenter'));
+  assert.equal(a.doc.querySelector('.dica-flutuante').textContent, esperado);
   a.fechar();
 });
 
@@ -135,6 +145,21 @@ test('lista de módulos é recolhível e começa fechada', async () => {
   a.clicar(a.doc.querySelector('.modulo-cabecalho'));
   assert.equal(a.doc.querySelector('.modulo-cabecalho').getAttribute('aria-expanded'), 'false');
   assert.equal(a.doc.querySelector('.segmentos').hidden, true);
+  a.fechar();
+});
+
+test('escolher um módulo fecha a lista sozinho e mostra o escolhido na caixa', async () => {
+  const a = await abrirApp();
+  const cabecalho = () => a.doc.querySelector('.modulo-cabecalho');
+  assert.match(cabecalho().textContent, /^Todos/); // começa em "Todos" (estado.modulo = '*')
+
+  a.clicar(cabecalho());
+  assert.equal(a.doc.querySelector('.segmentos').hidden, false);
+  a.clicar(a.botao('ATIVO_LOG', a.doc.querySelector('.segmentos')));
+
+  assert.equal(a.doc.querySelector('.segmentos').hidden, true, 'a lista fecha sozinha ao escolher');
+  assert.equal(cabecalho().getAttribute('aria-expanded'), 'false');
+  assert.match(cabecalho().textContent, /^ATIVO_LOG/, 'a caixa mostra o módulo escolhido');
   a.fechar();
 });
 
@@ -451,7 +476,7 @@ test('funcionalidade: o campo do modal salva e o ícone de interrogação mostra
   a.escolherColuna(a.doc.querySelector('.picker'), 'coluna_func_teste');
   a.abrirGrupos();
   await esperar(() => a.doc.querySelector('.rel'));
-  const icone = a.doc.querySelector('.rel-ajuda');
+  const icone = a.doc.querySelector('.resultados .rel-ajuda');
   assert.ok(icone, 'deve ter o ícone de interrogação');
   assert.equal(icone.getAttribute('title'), null, 'não deve usar o tooltip nativo do navegador');
   icone.dispatchEvent(new a.w.Event('mouseenter'));
@@ -465,7 +490,7 @@ test('funcionalidade: o campo do modal salva e o ícone de interrogação mostra
   a.escolherColuna(a.doc.querySelector('.picker'), 'coluna_sem_func_teste');
   a.abrirGrupos();
   await esperar(() => a.doc.querySelector('.rel'));
-  assert.ok(!a.doc.querySelector('.rel-ajuda'), 'sem funcionalidade não deve ter o ícone');
+  assert.ok(!a.doc.querySelector('.resultados .rel-ajuda'), 'sem funcionalidade não deve ter o ícone');
   a.fechar();
 });
 

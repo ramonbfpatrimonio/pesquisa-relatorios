@@ -25,9 +25,20 @@ const MODELO_CSV_RELATORIOS =
   'ATIVO_ADM;Cheques Pendentes;;"CHEQUE;BANCO;VENCIMENTO"\r\n';
 
 function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, verificarAtualizacoes, baixarAtualizacao, instalarAtualizacao }) {
+  // Texto de "o que mudou" dessa versão, editado à mão em data/novidades.txt antes de publicar.
+  // Cada build carrega o texto que estava lá naquele momento — versões antigas instaladas mantêm o texto delas.
+  function lerNovidades() {
+    try {
+      const texto = fs.readFileSync(path.join(__dirname, '..', 'data', 'novidades.txt'), 'utf8').trim();
+      return texto || null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   const uteis = () => ({
     db: store.db,
-    info: { ...store.resumo(), versao, avisoInicial: store.avisoInicial },
+    info: { ...store.resumo(), versao, avisoInicial: store.avisoInicial, novidades: lerNovidades() },
   });
 
   const acoes = {

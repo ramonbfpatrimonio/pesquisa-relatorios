@@ -1,0 +1,5 @@
+|MUDANÇAS|
+
+1- Escolher um módulo, fecha a lista sozinha e mostra o nome escolhido na caixa (em vez de continuar dizendo "Módulo").
+
+2- Colunas em ordem alfabética ao abrir a caixa vazia — antes de digitar qualquer coisa, a lista vem A→Z. Continua ordenando por relevância quando você digita algo pra buscar.
