@@ -14,18 +14,20 @@
     relModulo: '*',
     relTexto: '',
     colTexto: '',
+    filtroTexto: '',
     menuOculto: true,
   };
 
   // Menus que só aparecem depois de liberados com Ctrl+Shift+B e a senha.
-  const ABAS_PROTEGIDAS = new Set(['relatorios', 'colunas', 'dados']);
+  const ABAS_PROTEGIDAS = new Set(['relatorios', 'colunas', 'filtros', 'dados']);
   const SENHA_MENU = '@t1v0ERP10';
 
-  const ABAS = [
-    ['pesquisar', 'Pesquisar'],
+  // Relatórios, Colunas e Filtros ficam juntos, debaixo do rótulo "Gerenciar"; Pesquisar e
+  // Configurações continuam soltos no topo/fim da lista.
+  const GERENCIAR_ITENS = [
     ['relatorios', 'Relatórios'],
     ['colunas', 'Colunas'],
-    ['dados', 'Configurações'],
+    ['filtros', 'Filtros'],
   ];
 
   // ---------- utilidades ----------
@@ -460,6 +462,118 @@
 
   // Editor dos filtros de um relatório (os campos que aparecem antes de rodar, tipo Cliente/
   // Emissão/Situação) — uma linha por filtro: nome, tipo, e opções só quando o tipo é lista.
+  // Campo de buscar/criar filtro — mesmo padrão do campo de colunas: digita, aparecem sugestões
+  // (os filtros já usados em outros relatórios), clica ou aperta Enter pra adicionar.
+  function criarBuscaFiltro({ opcoes, jaTemNome, aoEscolher }) {
+    let itens = [];
+    let ativo = -1;
+    let aberto = false;
+    const idMenu = 'filtro-menu-' + Math.random().toString(36).slice(2, 8);
+
+    const entrada = h('input', {
+      type: 'text',
+      role: 'combobox',
+      'aria-autocomplete': 'list',
+      'aria-controls': idMenu,
+      'aria-expanded': 'false',
+      'aria-label': 'Buscar ou criar filtro',
+      placeholder: 'Digite pra buscar um filtro já usado, ou criar um novo',
+      autocomplete: 'off',
+      spellcheck: 'false',
+    });
+    const menu = h('ul', { class: 'picker-menu', id: idMenu, role: 'listbox', hidden: true, onmousedown: (e) => e.preventDefault() });
+    const caixa = h('div', { class: 'picker-caixa', onclick: () => entrada.focus() }, entrada);
+    const raiz = h('div', { class: 'picker filtro-busca' }, caixa, menu);
+
+    function marcarAtivo(rolar) {
+      [...menu.children].forEach((li, i) => {
+        li.setAttribute('aria-selected', String(i === ativo));
+        if (i === ativo) {
+          entrada.setAttribute('aria-activedescendant', li.id);
+          if (rolar && li.scrollIntoView) li.scrollIntoView({ block: 'nearest' });
+        }
+      });
+    }
+
+    function desenharMenu() {
+      menu.replaceChildren();
+      if (!aberto) {
+        menu.hidden = true;
+        entrada.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      if (!itens.length) menu.append(h('li', { class: 'vazio' }, 'Nenhum filtro com esse nome'));
+      itens.forEach((it, i) => {
+        menu.append(
+          h(
+            'li',
+            {
+              role: 'option',
+              id: `${idMenu}-${i}`,
+              class: it.novo ? 'novo' : '',
+              'aria-selected': String(i === ativo),
+              onmousedown: (e) => { e.preventDefault(); escolher(i); },
+              onmousemove: () => { if (ativo !== i) { ativo = i; marcarAtivo(false); } },
+            },
+            it.novo
+              ? `Criar filtro “${it.nome}”`
+              : [h('span', {}, it.nome), h('small', {}, `${B.TIPOS_FILTRO[it.tipo] || 'Texto'} · ${plural(it.qtd, 'relatório', 'relatórios')}`)]
+          )
+        );
+      });
+      menu.hidden = false;
+      entrada.setAttribute('aria-expanded', 'true');
+    }
+
+    function atualizarMenu() {
+      const texto = entrada.value.trim();
+      const busca = B.normalizarBusca(texto);
+      const catalogo = opcoes();
+      itens = (busca ? catalogo.filter((f) => B.normalizarBusca(f.nome).includes(busca)) : catalogo.slice()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+      const nomeLimpo = texto.replace(/\s+/g, ' ').trim();
+      const existeExato = catalogo.some((f) => B.normalizarBusca(f.nome) === busca);
+      if (nomeLimpo && !existeExato && !jaTemNome(nomeLimpo)) itens.push({ nome: nomeLimpo, novo: true });
+      ativo = itens.length ? 0 : -1;
+      desenharMenu();
+      marcarAtivo(false);
+    }
+
+    function abrir() { aberto = true; atualizarMenu(); }
+    function fecharMenu() { aberto = false; desenharMenu(); }
+
+    function escolher(i) {
+      const it = itens[i];
+      if (!it) return;
+      if (!it.novo && jaTemNome(it.nome)) { aviso(`“${it.nome}” já está na lista.`); return; }
+      entrada.value = '';
+      aoEscolher(it);
+      if (aberto) atualizarMenu();
+    }
+
+    entrada.addEventListener('input', abrir);
+    entrada.addEventListener('focus', abrir);
+    entrada.addEventListener('blur', fecharMenu);
+    entrada.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!aberto) return abrir();
+        if (!itens.length) return;
+        ativo = (ativo + (e.key === 'ArrowDown' ? 1 : -1) + itens.length) % itens.length;
+        marcarAtivo(true);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (aberto && ativo >= 0) escolher(ativo);
+      } else if (e.key === 'Escape') {
+        if (aberto) {
+          e.stopPropagation();
+          fecharMenu();
+        }
+      }
+    });
+
+    return { el: raiz };
+  }
+
   function criarEditorFiltros(iniciais) {
     const linhasEl = h('div', { class: 'filtros-editor-linhas' });
     const registros = [];
@@ -484,14 +598,25 @@
       const registro = { nome: campoNome, tipo: campoTipo, opcoes: campoOpcoes };
       registros.push(registro);
       linhasEl.append(linha);
+      return { campoNome, campoTipo, campoOpcoes };
     }
 
     (iniciais || []).forEach(criarLinha);
 
-    const botaoAdicionar = h('button', { type: 'button', class: 'btn pequeno', onclick: () => criarLinha() }, '+ Adicionar filtro');
+    // Busca (igual a de colunas): digite pra achar um filtro já usado em outro relatório e clique
+    // pra adicionar (já vem com o tipo/opções que ele tinha lá — dá pra ajustar depois). Digitar um
+    // nome novo e apertar Enter cria um filtro do zero, tipo Texto por padrão.
+    const buscaFiltro = criarBuscaFiltro({
+      opcoes: () => B.catalogoFiltros(estado.db.relatorios),
+      jaTemNome: (nome) => registros.some((r) => B.normalizarBusca(r.nome.value) === B.normalizarBusca(nome)),
+      aoEscolher: (item) => {
+        const { campoNome } = criarLinha(item.novo ? { nome: item.nome, tipo: 'texto' } : item);
+        campoNome.focus();
+      },
+    });
 
     return {
-      el: h('div', { class: 'filtros-editor' }, linhasEl, botaoAdicionar),
+      el: h('div', { class: 'filtros-editor' }, linhasEl, h('div', { class: 'rotulo filtros-editor-rotulo' }, 'Adicionar filtro'), buscaFiltro.el),
       valores() {
         return registros
           .map((r) => {
@@ -513,15 +638,19 @@
 
   function montarAbas() {
     const nav = $('#abas');
-    const visiveis = ABAS.filter(([id]) => !estado.menuOculto || !ABAS_PROTEGIDAS.has(id));
-    nav.replaceChildren(
-      ...visiveis.map(([id, nome]) =>
-        h('button', { type: 'button', 'data-aba': id, onclick: () => { estado.aba = id; render(); } }, nome)
-      )
-    );
+    const botaoAba = (id, nome, extraClasse) =>
+      h('button', { type: 'button', class: extraClasse || '', 'data-aba': id, onclick: () => { estado.aba = id; render(); } }, nome);
+
+    const nos = [botaoAba('pesquisar', 'Pesquisar')];
+    if (!estado.menuOculto) {
+      nos.push(h('div', { class: 'submenu-titulo' }, 'Gerenciar'));
+      for (const [id, nome] of GERENCIAR_ITENS) nos.push(botaoAba(id, nome, 'submenu-item'));
+      nos.push(botaoAba('dados', 'Configurações'));
+    }
+    nav.replaceChildren(...nos);
   }
 
-  // Pede a senha para mostrar Relatórios, Colunas e Configurações.
+  // Pede a senha para mostrar Relatórios, Colunas, Filtros e Configurações.
   function pedirSenha() {
     return new Promise((resolver) => {
       const campo = h('input', { type: 'password', id: 'campo-senha', autocomplete: 'off' });
@@ -536,7 +665,7 @@
         titulo: 'Liberar menus',
         corpo: [
           h('div', {}, h('label', { class: 'rotulo', for: 'campo-senha' }, 'Senha'), campo),
-          h('p', { class: 'ajuda' }, 'Digite a senha para mostrar Relatórios, Colunas e Configurações.'),
+          h('p', { class: 'ajuda' }, 'Digite a senha para mostrar Relatórios, Colunas, Filtros e Configurações.'),
         ],
         aoFechar: () => resolver(null),
         acoes: [
@@ -585,6 +714,7 @@
     if (estado.aba === 'pesquisar') renderPesquisa(alvo);
     else if (estado.aba === 'relatorios') renderRelatorios(alvo);
     else if (estado.aba === 'colunas') renderColunas(alvo);
+    else if (estado.aba === 'filtros') renderFiltros(alvo);
     else renderDados(alvo);
   }
 
@@ -1309,6 +1439,109 @@
           h('h1', {}, 'Colunas'),
           h('p', { class: 'ajuda' }, 'Renomear uma coluna vale para todos os relatórios que a usam.'),
           painelSimilares,
+          h('div', { class: 'barra' }, busca, contagem),
+          tabela
+        )
+      )
+    );
+    desenharTabela();
+  }
+
+  // ---------- aba Filtros ----------
+
+  async function renomearFiltroPrompt(nome) {
+    const digitado = await pedirTexto({
+      titulo: 'Renomear filtro',
+      rotulo: 'Novo nome',
+      valor: nome,
+      ajuda: 'A mudança vale em todos os relatórios que têm esse filtro. O tipo e as opções de cada um continuam os mesmos.',
+    });
+    if (digitado === null) return;
+    const novo = digitado.replace(/\s+/g, ' ').trim();
+    if (!novo || novo === nome) return;
+    const r = await chamar('renomearFiltro', nome, novo);
+    if (!r) return;
+    atualizarBanco(r.dados.db);
+    aviso(plural(r.dados.alterados, 'relatório atualizado', 'relatórios atualizados'));
+    render();
+  }
+
+  function abrirRelatoriosDoFiltro(item) {
+    abrirModal({
+      titulo: `Relatórios com o filtro “${item.nome}”`,
+      corpo: [
+        h(
+          'ul',
+          { class: 'lista-simples' },
+          item.relatorios.map((r) => h('li', {}, `${r.nome} `, h('span', { class: 'rel-modulo' }, r.modulo)))
+        ),
+      ],
+      acoes: [{ rotulo: 'Fechar', tipo: 'primario' }],
+    });
+  }
+
+  function renderFiltros(alvo) {
+    const tabela = h('div', {});
+    const contagem = h('span', { class: 'contagem' });
+
+    const busca = h('input', {
+      type: 'search',
+      class: 'crescer',
+      placeholder: 'Buscar filtro',
+      'aria-label': 'Buscar filtro',
+      value: estado.filtroTexto,
+      oninput: (e) => { estado.filtroTexto = e.target.value; desenharTabela(); },
+    });
+
+    const todos = B.catalogoFiltros(estado.db.relatorios);
+
+    function desenharTabela() {
+      const texto = B.normalizarBusca(estado.filtroTexto);
+      const lista = todos.filter((f) => !texto || B.normalizarBusca(f.nome).includes(texto));
+      contagem.textContent = plural(lista.length, 'filtro', 'filtros');
+      if (!lista.length) {
+        tabela.replaceChildren(
+          h('div', { class: 'tabela-vazia' }, texto ? 'Nenhum filtro com esse nome.' : 'Nenhum filtro cadastrado ainda. Adicione pelo editor de um relatório, na aba Relatórios.')
+        );
+        return;
+      }
+      tabela.replaceChildren(
+        h(
+          'table',
+          { class: 'tabela' },
+          h('thead', {}, h('tr', {}, h('th', {}, 'Filtro'), h('th', {}, 'Tipo'), h('th', { class: 'num' }, 'Relatórios'), h('th', {}, ''))),
+          h(
+            'tbody',
+            {},
+            lista.map((f) =>
+              h(
+                'tr',
+                {},
+                h('td', { class: 'mono' }, f.nome),
+                h('td', { class: 'ajuda' }, B.TIPOS_FILTRO[f.tipo] || 'Texto'),
+                h('td', { class: 'num' }, f.qtd),
+                h(
+                  'td',
+                  { class: 'acoes' },
+                  h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => abrirRelatoriosDoFiltro(f) }, 'Ver relatórios'),
+                  h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => renomearFiltroPrompt(f.nome) }, 'Renomear')
+                )
+              )
+            )
+          )
+        )
+      );
+    }
+
+    alvo.append(
+      h(
+        'div',
+        { class: 'tela' },
+        h(
+          'div',
+          { class: 'tela-larga' },
+          h('h1', {}, 'Filtros'),
+          h('p', { class: 'ajuda' }, 'Os campos que aparecem na telinha do sistema antes de rodar um relatório (Cliente, Emissão, Situação...). Renomear um filtro vale para todos os relatórios que o têm.'),
           h('div', { class: 'barra' }, busca, contagem),
           tabela
         )

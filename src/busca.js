@@ -80,6 +80,22 @@
       .sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
   }
 
+  // Todos os filtros já usados em algum relatório, um por nome (a primeira definição que aparecer
+  // "ganha" o tipo/opções mostrados na lista, mas isso não afeta o que cada relatório já tem salvo).
+  function catalogoFiltros(relatorios) {
+    const mapa = new Map();
+    for (const r of relatorios) {
+      for (const f of r.filtros || []) {
+        const chave = normalizarBusca(f.nome);
+        if (!mapa.has(chave)) mapa.set(chave, { nome: f.nome, tipo: f.tipo, opcoes: f.opcoes, qtd: 0, relatorios: [] });
+        const e = mapa.get(chave);
+        e.qtd++;
+        e.relatorios.push({ id: r.id, nome: r.nome, modulo: r.modulo });
+      }
+    }
+    return [...mapa.values()].sort((a, b) => b.qtd - a.qtd || a.nome.localeCompare(b.nome, 'pt'));
+  }
+
   // Sugestões para o campo de digitação: começa com > começa uma palavra > contém.
   function sugerirColunas(opcoes, texto, excluir, limite) {
     const fora = excluir || new Set();
@@ -279,5 +295,6 @@
     TIPOS_FILTRO,
     limparFiltros,
     mesclarFiltros,
+    catalogoFiltros,
   };
 });

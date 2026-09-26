@@ -153,3 +153,12 @@ test('definirModulosOcultos repassa para o store', async () => {
   assert.equal(r.ok, true);
   assert.deepEqual(store.db.modulosOcultos, ['ATIVO_LOG']);
 });
+
+test('renomearFiltro repassa para o store', async () => {
+  const { handlers, store } = montar();
+  store.salvarRelatorio({ nome: 'Rel', modulo: 'ATIVO_ECD', colunas: ['A'], filtros: [{ nome: 'Cliente', tipo: 'texto' }] });
+  const r = await handlers.renomearFiltro('Cliente', 'Comprador');
+  assert.equal(r.ok, true);
+  assert.equal(r.dados.alterados, 1);
+  assert.equal(store.db.relatorios.find((x) => x.nome === 'Rel').filtros[0].nome, 'Comprador');
+});

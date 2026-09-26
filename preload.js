@@ -10,6 +10,7 @@ const ACOES = [
   'excluirModulo',
   'definirModulosOcultos',
   'renomearColuna',
+  'renomearFiltro',
   'ignorarSimilar',
   'obterImagem',
   'removerImagem',

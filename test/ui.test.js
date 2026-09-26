@@ -326,7 +326,7 @@ test('digitar no campo sugere colunas; setas e Enter escolhem; Backspace remove 
   a.fechar();
 });
 
-test('menu protegido: Ctrl+Shift+B pede senha para liberar Relatórios, Colunas e Configurações', async () => {
+test('menu protegido: Ctrl+Shift+B pede senha para liberar Relatórios, Colunas, Filtros e Configurações', async () => {
   const a = await abrirApp();
   assert.deepEqual(a.todos('#abas button').map((b) => b.textContent), ['Pesquisar']);
 
@@ -342,7 +342,7 @@ test('menu protegido: Ctrl+Shift+B pede senha para liberar Relatórios, Colunas 
 
   // senha certa libera os três menus
   await a.destravarMenu();
-  assert.deepEqual(a.todos('#abas button').map((b) => b.textContent), ['Pesquisar', 'Relatórios', 'Colunas', 'Configurações']);
+  assert.deepEqual(a.todos('#abas button').map((b) => b.textContent), ['Pesquisar', 'Relatórios', 'Colunas', 'Filtros', 'Configurações']);
 
   // apertar de novo esconde, sem pedir senha, e volta para Pesquisar se estiver em outra aba
   await a.aba('Relatórios');
@@ -466,6 +466,48 @@ test('aba Colunas: nomes parecidos são listados e a unificação vale para todo
   a.fechar();
 });
 
+test('menu lateral: "Gerenciar" agrupa Relatórios, Colunas e Filtros; Configurações fica fora', async () => {
+  const a = await abrirApp();
+  await a.destravarMenu();
+  const nomes = a.todos('#abas button, #abas .submenu-titulo').map((el) => el.textContent);
+  assert.deepEqual(nomes, ['Pesquisar', 'Gerenciar', 'Relatórios', 'Colunas', 'Filtros', 'Configurações']);
+  a.fechar();
+});
+
+test('aba Filtros: lista os filtros cadastrados, busca, "Ver relatórios" e "Renomear"', async () => {
+  const a = await abrirApp();
+  a.store.salvarRelatorio({ nome: 'Rel A', modulo: 'ATIVO_ECD', colunas: ['X'], filtros: [{ nome: 'Cliente', tipo: 'texto' }] });
+  a.store.salvarRelatorio({ nome: 'Rel B', modulo: 'ATIVO_ADM', colunas: ['X'], filtros: [{ nome: 'Cliente', tipo: 'texto' }, { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto'] }] });
+
+  await a.aba('Filtros');
+  await esperar(() => a.doc.querySelector('.tabela'));
+  assert.equal(a.doc.querySelector('.contagem').textContent, '2 filtros');
+
+  a.digitar(a.doc.querySelector('input[type="search"]'), 'situa');
+  assert.equal(a.doc.querySelector('.contagem').textContent, '1 filtro');
+  const linha = a.todos('.tabela tbody tr')[0];
+  assert.match(linha.textContent, /Situacao/);
+  assert.match(linha.textContent, /Lista/);
+  assert.equal(linha.querySelector('.num').textContent, '1');
+
+  a.clicar(a.botao('Ver relatórios', linha));
+  await esperar(() => a.modal());
+  assert.match(a.modal().textContent, /Rel B/);
+  assert.ok(!a.modal().textContent.includes('Rel A'), 'Rel A não tem o filtro Situacao');
+  a.clicar(a.botao('Fechar', a.modal()));
+  await esperar(() => !a.modal());
+
+  a.digitar(a.doc.querySelector('input[type="search"]'), '');
+  const linhaCliente = a.todos('.tabela tbody tr').find((tr) => tr.textContent.includes('Cliente'));
+  a.clicar(a.botao('Renomear', linhaCliente));
+  await esperar(() => a.modal());
+  a.digitar(a.modal().querySelector('input'), 'Comprador');
+  a.clicar(a.botao('Continuar', a.modal()));
+  await esperar(() => a.store.db.relatorios.find((r) => r.nome === 'Rel A').filtros[0].nome === 'Comprador');
+  assert.equal(a.store.db.relatorios.find((r) => r.nome === 'Rel B').filtros[0].nome, 'Comprador');
+  a.fechar();
+});
+
 test('aba Colunas: renomear e "Ver relatórios" leva à pesquisa com a coluna escolhida', async () => {
   const a = await abrirApp();
   await a.aba('Colunas');
@@ -564,7 +606,7 @@ test('editar relatório existente carrega a funcionalidade já salva no campo do
   a.fechar();
 });
 
-test('filtros do relatório: cria pelo editor do modal, salva, edita de novo e carrega os valores', async () => {
+test('filtros do relatório: busca e cria pelo campo (igual colunas), salva, edita de novo e carrega os valores', async () => {
   const a = await abrirApp();
   await a.aba('Relatórios');
   a.clicar(a.botao('Novo relatório'));
@@ -573,14 +615,20 @@ test('filtros do relatório: cria pelo editor do modal, salva, edita de novo e c
   m.querySelector('#campo-modulo').value = 'ATIVO_ECD';
   a.escolherColuna(m.querySelector('.picker'), 'coluna_teste_filtro');
 
+  const buscaFiltro = m.querySelector('.filtro-busca input');
   const linhas = () => a.todos('.filtro-linha', m);
-  a.clicar(a.botao('+ Adicionar filtro', m));
-  let linha1 = linhas()[0];
-  a.digitar(linha1.querySelector('input'), 'Cliente');
 
-  a.clicar(a.botao('+ Adicionar filtro', m));
-  let linha2 = linhas()[1];
-  a.digitar(linha2.querySelectorAll('input')[0], 'Situacao');
+  // digita um nome novo e aperta Enter -> cria a linha (tipo Texto por padrão)
+  a.digitar(buscaFiltro, 'Cliente');
+  a.tecla(buscaFiltro, 'Enter');
+  assert.equal(linhas().length, 1);
+  assert.equal(linhas()[0].querySelector('input').value, 'Cliente');
+  assert.equal(buscaFiltro.value, '', 'o campo de busca limpa depois de adicionar');
+
+  // outro filtro novo, e ajusta o tipo pra Lista na própria linha criada
+  a.digitar(buscaFiltro, 'Situacao');
+  a.tecla(buscaFiltro, 'Enter');
+  const linha2 = linhas()[1];
   const selTipo = linha2.querySelector('select');
   selTipo.value = 'lista';
   selTipo.dispatchEvent(new a.w.Event('change', { bubbles: true }));
@@ -603,6 +651,12 @@ test('filtros do relatório: cria pelo editor do modal, salva, edita de novo e c
   assert.equal(linhasReabertas.length, 2);
   assert.equal(linhasReabertas[0].querySelector('input').value, 'Cliente');
   assert.equal(linhasReabertas[1].querySelectorAll('input')[1].value, 'Aberto, Fechado, Pendente');
+
+  // busca por um filtro já usado em outro relatório (via catálogo) e clica pra adicionar
+  const buscaFiltro2 = m.querySelector('.filtro-busca input');
+  a.digitar(buscaFiltro2, 'Cliente');
+  buscaFiltro2.dispatchEvent(new a.w.Event('focus'));
+  assert.ok(!a.todos('.filtro-busca .picker-menu li').some((li) => /^Criar filtro/.test(li.textContent)), 'filtro já existente não oferece "criar", só a sugestão dele');
   a.fechar();
 });
 

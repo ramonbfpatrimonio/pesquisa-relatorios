@@ -125,3 +125,18 @@ test('mesclarFiltros: sem filtros existentes, os novos viram a lista inteira', (
   const novos = [{ nome: 'Cliente', tipo: 'texto' }];
   assert.deepEqual(B.mesclarFiltros(null, novos), novos);
 });
+
+test('catalogoFiltros: um por nome, com contagem e a lista de relatórios que usam', () => {
+  const rels = [
+    { id: 'a', modulo: 'ADM', nome: 'Rel A', colunas: [], filtros: [{ nome: 'Cliente', tipo: 'texto' }, { nome: 'Situacao', tipo: 'lista', opcoes: ['X'] }] },
+    { id: 'b', modulo: 'LOG', nome: 'Rel B', colunas: [], filtros: [{ nome: 'cliente', tipo: 'texto' }] }, // mesmo nome, caixa diferente
+    { id: 'c', modulo: 'LOG', nome: 'Rel C', colunas: [] }, // sem filtros
+  ];
+  const cat = B.catalogoFiltros(rels);
+  assert.equal(cat.length, 2);
+  const cliente = cat.find((f) => B.normalizarBusca(f.nome) === 'CLIENTE');
+  assert.equal(cliente.qtd, 2);
+  assert.deepEqual(cliente.relatorios.map((r) => r.id).sort(), ['a', 'b']);
+  const situacao = cat.find((f) => f.nome === 'Situacao');
+  assert.equal(situacao.qtd, 1);
+});

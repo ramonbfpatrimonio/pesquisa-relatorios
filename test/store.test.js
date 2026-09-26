@@ -286,6 +286,37 @@ test('excluirModulo tira o módulo excluído da lista de ocultos também', () =>
   assert.ok(!store.db.modulosOcultos.includes('SO_PRA_ESCONDER'));
 });
 
+test('renomearFiltro troca o nome em todos os relatórios que o têm, mantendo tipo/opções de cada um', () => {
+  const { store } = novoStore();
+  store.salvarRelatorio({ nome: 'Rel A', modulo: 'ATIVO_ECD', colunas: ['A'], filtros: [{ nome: 'Situacao', tipo: 'lista', opcoes: ['X', 'Y'] }] });
+  store.salvarRelatorio({ nome: 'Rel B', modulo: 'ATIVO_ADM', colunas: ['A'], filtros: [{ nome: 'situacao', tipo: 'texto' }] }); // caixa diferente
+  store.salvarRelatorio({ nome: 'Rel C', modulo: 'ATIVO_ADM', colunas: ['A'], filtros: [{ nome: 'Cliente', tipo: 'texto' }] }); // não tem esse filtro
+
+  const r = store.renomearFiltro('Situacao', 'Status');
+  assert.equal(r.alterados, 2);
+  assert.deepEqual(store.db.relatorios.find((x) => x.nome === 'Rel A').filtros, [{ nome: 'Status', tipo: 'lista', opcoes: ['X', 'Y'] }]);
+  assert.deepEqual(store.db.relatorios.find((x) => x.nome === 'Rel B').filtros, [{ nome: 'Status', tipo: 'texto' }]);
+  assert.deepEqual(store.db.relatorios.find((x) => x.nome === 'Rel C').filtros, [{ nome: 'Cliente', tipo: 'texto' }]); // intocado
+
+  assert.throws(() => store.renomearFiltro('Nao Existe', 'X'), /não encontrado/);
+  assert.throws(() => store.renomearFiltro('Status', '  '), /novo nome/);
+});
+
+test('renomearFiltro: se o novo nome já existir no mesmo relatório, os dois viram um só', () => {
+  const { store } = novoStore();
+  store.salvarRelatorio({
+    nome: 'Rel Com Dois',
+    modulo: 'ATIVO_ECD',
+    colunas: ['A'],
+    filtros: [
+      { nome: 'Cliente', tipo: 'texto' },
+      { nome: 'Comprador', tipo: 'texto' },
+    ],
+  });
+  store.renomearFiltro('Comprador', 'Cliente');
+  assert.deepEqual(store.db.relatorios.find((x) => x.nome === 'Rel Com Dois').filtros, [{ nome: 'Cliente', tipo: 'texto' }]);
+});
+
 test('salvarRelatorio grava e valida os filtros: tipo desconhecido vira texto, sem nome some, opções só em lista', () => {
   const { store } = novoStore();
   store.salvarRelatorio({

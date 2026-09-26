@@ -255,6 +255,30 @@ class Store {
     return { db: this.db, alterados };
   }
 
+  // Renomeia um filtro em todos os relatórios que o têm (só o nome; tipo e opções de cada um
+  // continuam como estavam). Se o novo nome já existir num relatório, os dois viram um só ali.
+  renomearFiltro(de, para) {
+    const novo = String(para || '').replace(/\s+/g, ' ').trim();
+    if (!novo) throw new Error('Informe o novo nome do filtro.');
+    let alterados = 0;
+    for (const r of this.db.relatorios) {
+      if (!Array.isArray(r.filtros) || !r.filtros.length) continue;
+      let mudou = false;
+      r.filtros = r.filtros.map((f) => {
+        if (nomeComparavel(f.nome) !== nomeComparavel(de)) return f;
+        mudou = true;
+        return { ...f, nome: novo };
+      });
+      if (mudou) {
+        r.filtros = limparFiltros(r.filtros);
+        alterados++;
+      }
+    }
+    if (!alterados) throw new Error('Filtro não encontrado.');
+    this._gravar();
+    return { db: this.db, alterados };
+  }
+
   ignorarSimilar(chave) {
     if (!this.db.ignorados.includes(chave)) {
       this.db.ignorados.push(chave);
