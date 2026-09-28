@@ -342,7 +342,7 @@ test('menu protegido: Ctrl+Shift+B pede senha para liberar Relatórios, Colunas,
 
   // senha certa libera os três menus
   await a.destravarMenu();
-  assert.deepEqual(a.todos('#abas button').map((b) => b.textContent), ['Pesquisar', 'Relatórios', 'Colunas', 'Filtros', 'Configurações']);
+  assert.deepEqual(a.todos('#abas button').map((b) => b.textContent), ['Pesquisar', 'Cadastros▾', 'Relatórios', 'Colunas', 'Filtros', 'Configurações']);
 
   // apertar de novo esconde, sem pedir senha, e volta para Pesquisar se estiver em outra aba
   await a.aba('Relatórios');
@@ -466,11 +466,18 @@ test('aba Colunas: nomes parecidos são listados e a unificação vale para todo
   a.fechar();
 });
 
-test('menu lateral: "Gerenciar" agrupa Relatórios, Colunas e Filtros; Configurações fica fora', async () => {
+test('menu lateral: "Cadastros" agrupa Relatórios, Colunas e Filtros e é recolhível; Configurações fica fora', async () => {
   const a = await abrirApp();
   await a.destravarMenu();
-  const nomes = a.todos('#abas button, #abas .submenu-titulo').map((el) => el.textContent);
-  assert.deepEqual(nomes, ['Pesquisar', 'Gerenciar', 'Relatórios', 'Colunas', 'Filtros', 'Configurações']);
+  const nomes = () => a.todos('#abas button').map((el) => el.textContent);
+  assert.deepEqual(nomes(), ['Pesquisar', 'Cadastros▾', 'Relatórios', 'Colunas', 'Filtros', 'Configurações']);
+
+  a.clicar(a.botao('Cadastros'));
+  assert.deepEqual(nomes(), ['Pesquisar', 'Cadastros▾', 'Configurações'], 'recolhido esconde os três');
+  assert.equal(a.botao('Cadastros').getAttribute('aria-expanded'), 'false');
+
+  a.clicar(a.botao('Cadastros'));
+  assert.deepEqual(nomes(), ['Pesquisar', 'Cadastros▾', 'Relatórios', 'Colunas', 'Filtros', 'Configurações']);
   a.fechar();
 });
 
@@ -505,6 +512,98 @@ test('aba Filtros: lista os filtros cadastrados, busca, "Ver relatórios" e "Ren
   a.clicar(a.botao('Continuar', a.modal()));
   await esperar(() => a.store.db.relatorios.find((r) => r.nome === 'Rel A').filtros[0].nome === 'Comprador');
   assert.equal(a.store.db.relatorios.find((r) => r.nome === 'Rel B').filtros[0].nome, 'Comprador');
+  a.fechar();
+});
+
+test('aba Colunas: "Nova coluna" cria uma solta, aparece na lista e nas sugestões, e não deixa criar igual', async () => {
+  const a = await abrirApp();
+  await a.aba('Colunas');
+  a.clicar(a.botao('Nova coluna'));
+  await esperar(() => a.modal());
+  a.digitar(a.modal().querySelector('input'), 'coluna solta teste');
+  a.clicar(a.botao('Continuar', a.modal()));
+  await esperar(() => a.store.db.colunasCadastradas.includes('COLUNA SOLTA TESTE'));
+  await esperar(() => !a.modal());
+  assert.ok(a.todos('.tabela tbody tr').some((tr) => tr.firstChild.textContent === 'COLUNA SOLTA TESTE'), 'aparece na tabela mesmo sem relatório');
+
+  // duplicata (mesma coluna, caixa diferente): avisa e não cria outra
+  a.clicar(a.botao('Nova coluna'));
+  await esperar(() => a.modal());
+  a.digitar(a.modal().querySelector('input'), 'Coluna Solta Teste');
+  a.clicar(a.botao('Continuar', a.modal()));
+  await esperar(() => a.doc.querySelector('.aviso.erro'));
+  assert.match(a.doc.querySelector('.aviso.erro').textContent, /já existe/);
+  assert.equal(a.store.db.colunasCadastradas.filter((c) => c === 'COLUNA SOLTA TESTE').length, 1);
+  a.fechar();
+});
+
+test('aba Filtros: "Novo filtro" cria um solto (tipo lista com opções) e recusa duplicata', async () => {
+  const a = await abrirApp();
+  await a.aba('Filtros');
+  a.clicar(a.botao('Novo filtro'));
+  await esperar(() => a.modal());
+  const m = a.modal();
+  a.digitar(m.querySelector('#novo-filtro-nome'), 'Situacao');
+  m.querySelector('#novo-filtro-tipo').value = 'lista';
+  m.querySelector('#novo-filtro-tipo').dispatchEvent(new a.w.Event('change', { bubbles: true }));
+  assert.equal(m.querySelector('#novo-filtro-opcoes').parentElement.hidden, false);
+  a.digitar(m.querySelector('#novo-filtro-opcoes'), 'Aberto, Fechado');
+  a.clicar(a.botao('Criar', m));
+  await esperar(() => a.store.db.filtrosCadastrados.length === 1);
+  assert.deepEqual(a.store.db.filtrosCadastrados[0], { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado'] });
+  await esperar(() => !a.modal());
+  assert.equal(a.doc.querySelector('.contagem').textContent, '1 filtro');
+
+  a.clicar(a.botao('Novo filtro'));
+  await esperar(() => a.modal());
+  a.digitar(a.modal().querySelector('#novo-filtro-nome'), 'situacao');
+  a.clicar(a.botao('Criar', a.modal()));
+  await esperar(() => a.doc.querySelector('.aviso.erro'));
+  assert.match(a.doc.querySelector('.aviso.erro').textContent, /já existe/);
+  assert.ok(a.modal(), 'a janela continua aberta pra corrigir o nome');
+  assert.equal(a.store.db.filtrosCadastrados.length, 1);
+  a.fechar();
+});
+
+test('filtro cadastrado solto aparece como sugestão no editor de relatório', async () => {
+  const a = await abrirApp();
+  a.store.criarFiltro({ nome: 'Local De Armazenagem', tipo: 'texto' });
+  await a.aba('Relatórios');
+  a.clicar(a.botao('Novo relatório'));
+  const busca = a.modal().querySelector('.filtro-busca input');
+  a.digitar(busca, 'armaz');
+  busca.dispatchEvent(new a.w.Event('focus'));
+  const itens = a.todos('.filtro-busca .picker-menu li').map((li) => li.textContent);
+  assert.ok(itens.some((t) => t.startsWith('Local De Armazenagem')), 'sugere o filtro solto');
+
+  // com o nome exato, não oferece criar outro igual (só a sugestão dele)
+  a.digitar(busca, 'local de armazenagem');
+  const itensExato = a.todos('.filtro-busca .picker-menu li').map((li) => li.textContent);
+  assert.ok(itensExato.some((t) => t.startsWith('Local De Armazenagem')));
+  assert.ok(!itensExato.some((t) => t.startsWith('Criar filtro')), 'não oferece criar de novo um que já existe');
+  a.fechar();
+});
+
+test('Pesquisar: buscar só pelo nome do relatório lista os que batem, e junto com colunas refina', async () => {
+  const a = await abrirApp();
+  const campo = a.doc.querySelector('#busca-nome-relatorio');
+  a.digitar(campo, 'cheques por cliente');
+  const esperados = a.store.db.relatorios.filter((r) => r.nome.toLowerCase().includes('cheques por cliente'));
+  assert.ok(esperados.length >= 2);
+  assert.equal(a.todos('.rel').length, esperados.length, 'só nome: lista direto, sem precisar escolher coluna');
+  assert.match(a.doc.querySelector('.resultados h1').textContent, new RegExp(`^${esperados.length} relatórios encontrados`));
+
+  // sem nada batendo
+  a.digitar(campo, 'zzzz nao existe');
+  assert.match(a.doc.querySelector('.resultados h1').textContent, /Nenhum relatório com esse nome/);
+
+  // nome + coluna: refina (só ficam os do nome que também têm a coluna)
+  a.digitar(campo, 'cheques por cliente');
+  a.escolherColuna(a.doc.querySelector('.picker'), 'EMISSAO');
+  a.abrirGrupos();
+  const comEmissao = esperados.filter((r) => r.colunas.includes('EMISSAO'));
+  assert.equal(a.todos('.rel').length, comEmissao.length);
+  assert.ok(a.todos('.rel-nome').every((n) => n.textContent.toLowerCase().includes('cheques por cliente')));
   a.fechar();
 });
 

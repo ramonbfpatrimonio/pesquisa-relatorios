@@ -162,3 +162,14 @@ test('renomearFiltro repassa para o store', async () => {
   assert.equal(r.dados.alterados, 1);
   assert.equal(store.db.relatorios.find((x) => x.nome === 'Rel').filtros[0].nome, 'Comprador');
 });
+
+test('criarColuna e criarFiltro repassam para o store', async () => {
+  const { handlers, store } = montar();
+  const r1 = await handlers.criarColuna('Nova');
+  assert.equal(r1.ok, true);
+  assert.ok(store.db.colunasCadastradas.includes('NOVA'));
+
+  const r2 = await handlers.criarFiltro({ nome: 'Filtro Novo', tipo: 'texto' });
+  assert.equal(r2.ok, true);
+  assert.ok(store.db.filtrosCadastrados.some((f) => f.nome === 'Filtro Novo'));
+});

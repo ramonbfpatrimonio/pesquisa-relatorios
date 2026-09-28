@@ -11,6 +11,8 @@ const ACOES = [
   'definirModulosOcultos',
   'renomearColuna',
   'renomearFiltro',
+  'criarColuna',
+  'criarFiltro',
   'ignorarSimilar',
   'obterImagem',
   'removerImagem',

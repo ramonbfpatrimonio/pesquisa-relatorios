@@ -406,3 +406,34 @@ test('validarBanco aceita um relatório já com filtros salvos (ex.: vindo de ba
   const reaberto = new Store({ pastaDados: store.pastaDados, pastaBackup: store.pastaBackup, seedPath: path.join(__dirname, '..', 'data', 'seed.json') }).iniciar();
   assert.deepEqual(reaberto.db.relatorios[0].filtros, [{ nome: 'Cliente', tipo: 'texto' }]);
 });
+
+test('criarColuna: cadastra solta, aparece na lista mesmo sem estar em relatório, e recusa duplicata', () => {
+  const { store } = novoStore();
+  store.criarColuna('  nova   coluna teste  ');
+  assert.ok(store.db.colunasCadastradas.includes('NOVA COLUNA TESTE'));
+
+  assert.throws(() => store.criarColuna('Nova Coluna Teste'), /já existe/); // mesma, caixa diferente
+  assert.throws(() => store.criarColuna('   '), /nome da coluna/);
+  assert.throws(() => store.criarColuna('VALOR'), /já existe/); // já usada em algum relatório do seed
+});
+
+test('criarFiltro: cadastra solto (com tipo/opções), e recusa duplicata pelo nome', () => {
+  const { store } = novoStore();
+  store.criarFiltro({ nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado'] });
+  assert.deepEqual(store.db.filtrosCadastrados, [{ nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado'] }]);
+
+  assert.throws(() => store.criarFiltro({ nome: 'situacao', tipo: 'texto' }), /já existe/);
+  assert.throws(() => store.criarFiltro({ nome: '' }), /nome do filtro/);
+
+  store.salvarRelatorio({ nome: 'Rel', modulo: 'ATIVO_ECD', colunas: ['A'], filtros: [{ nome: 'Cliente', tipo: 'texto' }] });
+  assert.throws(() => store.criarFiltro({ nome: 'Cliente' }), /já existe/); // já usado em relatório, mesmo não estando "cadastrado"
+});
+
+test('colunasCadastradas e filtrosCadastrados sobrevivem a reabrir o programa', () => {
+  const { store } = novoStore();
+  store.criarColuna('Solta');
+  store.criarFiltro({ nome: 'Solto', tipo: 'texto' });
+  const reaberto = new Store({ pastaDados: store.pastaDados, pastaBackup: store.pastaBackup, seedPath: path.join(__dirname, '..', 'data', 'seed.json') }).iniciar();
+  assert.ok(reaberto.db.colunasCadastradas.includes('SOLTA'));
+  assert.deepEqual(reaberto.db.filtrosCadastrados, [{ nome: 'Solto', tipo: 'texto' }]);
+});

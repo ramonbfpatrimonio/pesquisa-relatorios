@@ -11,7 +11,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { limparNomeColuna, semAcento, limparFiltros, mesclarFiltros } = require('./busca');
+const { limparNomeColuna, semAcento, normalizarBusca, limparFiltros, mesclarFiltros } = require('./busca');
 
 const EXTENSOES_IMAGEM = { '.gif': 'image/gif', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.bmp': 'image/bmp' };
 const LIMITE_IMAGEM = 10 * 1024 * 1024;
@@ -75,6 +75,10 @@ function validarBanco(obj) {
   // dados (sobrevive a atualizações do programa, que nunca mexem nesse arquivo), mas se o módulo
   // foi excluído ou não existe mais, tira ele da lista pra não sobrar lixo.
   obj.modulosOcultos = Array.isArray(obj.modulosOcultos) ? unicos(obj.modulosOcultos.filter((m) => typeof m === 'string' && obj.modulos.includes(m))) : [];
+  // Colunas e filtros cadastrados "soltos" (sem precisar já estar num relatório), pra aparecerem
+  // como sugestão desde já. Uma vez usados num relatório, continuam existindo aqui também.
+  obj.colunasCadastradas = Array.isArray(obj.colunasCadastradas) ? unicos(obj.colunasCadastradas.map(limparNomeColuna).filter(Boolean)) : [];
+  obj.filtrosCadastrados = limparFiltros(obj.filtrosCadastrados);
   obj.atualizadoEm = obj.atualizadoEm || null;
   return obj;
 }
@@ -277,6 +281,34 @@ class Store {
     if (!alterados) throw new Error('Filtro não encontrado.');
     this._gravar();
     return { db: this.db, alterados };
+  }
+
+  // Cria uma coluna "solta", sem precisar já estar num relatório — só pra ela aparecer como
+  // sugestão desde já. Não deixa criar uma que já existe (nem cadastrada, nem já usada em algum
+  // relatório).
+  criarColuna(nome) {
+    const limpo = limparNomeColuna(nome);
+    if (!limpo) throw new Error('Informe o nome da coluna.');
+    const jaExiste = this.db.colunasCadastradas.includes(limpo) || this.db.relatorios.some((r) => r.colunas.includes(limpo));
+    if (jaExiste) throw new Error(`A coluna ${limpo} já existe.`);
+    this.db.colunasCadastradas = unicos([...this.db.colunasCadastradas, limpo]);
+    this._gravar();
+    return this.db;
+  }
+
+  // Mesma ideia, mas pra filtro (nome + tipo + opções, se for lista).
+  criarFiltro(dados) {
+    const limpos = limparFiltros([dados]);
+    if (!limpos.length) throw new Error('Informe o nome do filtro.');
+    const novo = limpos[0];
+    const chave = normalizarBusca(novo.nome);
+    const jaExiste =
+      this.db.filtrosCadastrados.some((f) => normalizarBusca(f.nome) === chave) ||
+      this.db.relatorios.some((r) => (r.filtros || []).some((f) => normalizarBusca(f.nome) === chave));
+    if (jaExiste) throw new Error(`O filtro ${novo.nome} já existe.`);
+    this.db.filtrosCadastrados = [...this.db.filtrosCadastrados, novo];
+    this._gravar();
+    return this.db;
   }
 
   ignorarSimilar(chave) {

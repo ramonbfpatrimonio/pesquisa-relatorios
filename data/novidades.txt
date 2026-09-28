@@ -1,1 +1,1 @@
-Módulo agora fecha sozinho ao escolher e mostra o selecionado na caixa. Colunas em ordem alfabética ao abrir a lista. Ícone de novidades ao lado da versão.
+Novo: cadastro de colunas e filtros direto nas telas deles (sem repetir nomes), menu "Cadastros" recolhível e busca de relatório pelo nome na Pesquisar.

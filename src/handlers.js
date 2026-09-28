@@ -51,6 +51,8 @@ function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, 
     definirModulosOcultos: (nomes) => store.definirModulosOcultos(nomes),
     renomearColuna: (de, para) => store.renomearColuna(de, para),
     renomearFiltro: (de, para) => store.renomearFiltro(de, para),
+    criarColuna: (nome) => store.criarColuna(nome),
+    criarFiltro: (dados) => store.criarFiltro(dados),
     ignorarSimilar: (chave) => store.ignorarSimilar(chave),
 
     obterImagem: (id) => store.obterImagem(id),
