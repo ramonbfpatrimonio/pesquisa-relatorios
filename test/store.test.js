@@ -483,3 +483,31 @@ test('colunasCadastradas e filtrosCadastrados sobrevivem a reabrir o programa', 
   assert.ok(reaberto.db.colunasCadastradas.includes('SOLTA'));
   assert.deepEqual(reaberto.db.filtrosCadastrados, [{ nome: 'Solto', tipo: 'texto' }]);
 });
+
+test('renomearColuna também funciona numa coluna avulsa (0 relatórios) — bug: antes só achava dentro de relatórios', () => {
+  const { store } = novoStore();
+  store.criarColuna('SOLTA');
+  const r = store.renomearColuna('SOLTA', 'SOLTA_NOVA');
+  assert.equal(r.alterados, 0); // nenhum relatório tinha essa coluna
+  assert.ok(!store.db.colunasCadastradas.includes('SOLTA'));
+  assert.ok(store.db.colunasCadastradas.includes('SOLTA_NOVA'));
+});
+
+test('renomearFiltro também funciona num filtro avulso (0 relatórios) — bug: antes só achava dentro de relatórios', () => {
+  const { store } = novoStore();
+  store.criarFiltro({ nome: 'Grupos', tipo: 'texto' });
+  const r = store.renomearFiltro('Grupos', 'Grupo');
+  assert.equal(r.alterados, 0);
+  assert.deepEqual(store.db.filtrosCadastrados, [{ nome: 'Grupo', tipo: 'texto' }]);
+});
+
+test('tema começa "claro" e é só deste computador (sobrevive a reabrir)', () => {
+  const { store } = novoStore();
+  assert.equal(store.db.tema, 'claro');
+  store.definirTema('escuro');
+  assert.equal(store.db.tema, 'escuro');
+  const reaberto = new Store({ pastaDados: store.pastaDados, pastaBackup: store.pastaBackup, seedPath: path.join(__dirname, '..', 'data', 'seed.json') }).iniciar();
+  assert.equal(reaberto.db.tema, 'escuro');
+  store.definirTema('valor-invalido');
+  assert.equal(store.db.tema, 'claro'); // qualquer coisa que não seja "escuro" vira "claro"
+});

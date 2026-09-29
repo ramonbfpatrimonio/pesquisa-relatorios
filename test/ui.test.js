@@ -24,7 +24,7 @@ async function esperar(fn, ms = 3000) {
 }
 
 async function abrirApp(dialogo = {}, opcoes = {}) {
-  const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-ui-'));
+  const raiz = opcoes.raiz || fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-ui-'));
   const store = new Store({ pastaDados: path.join(raiz, 'dados'), pastaBackup: path.join(raiz, 'Backup'), seedPath: path.join(__dirname, '..', 'data', 'seed.json') }).iniciar();
   // Os testes simulam uma instalação já configurada (módulos escolhidos); a primeira execução tem teste próprio.
   if (!opcoes.primeiraExecucao) store.definirModulosOcultos([]);
@@ -33,6 +33,7 @@ async function abrirApp(dialogo = {}, opcoes = {}) {
     dialogo,
     versao: 'teste',
     abrirPasta: async () => true,
+    abrirArquivo: async () => true,
     salvarPastaBackup() {},
     verificarAtualizacoes: async () => ({ emDesenvolvimento: true }),
     baixarAtualizacao: async () => {},
@@ -64,6 +65,7 @@ async function abrirApp(dialogo = {}, opcoes = {}) {
       window.api = handlers;
       // simula o push de eventos de atualização que, no app de verdade, vem do preload/main.js
       window.api.aoAtualizar = (ouvinte) => { window.__ouvinteAtualizacao = ouvinte; };
+      window.api.aoStatusNuvem = (ouvinte) => { window.__ouvinteStatusNuvem = ouvinte; };
     },
   });
   const w = dom.window;
@@ -120,6 +122,10 @@ async function abrirApp(dialogo = {}, opcoes = {}) {
     dispararAtualizacao(dados) {
       assert.ok(w.__ouvinteAtualizacao, 'app.js precisa ter chamado window.api.aoAtualizar');
       w.__ouvinteAtualizacao(dados);
+    },
+    dispararStatusNuvem(status) {
+      assert.ok(w.__ouvinteStatusNuvem, 'app.js precisa ter chamado window.api.aoStatusNuvem');
+      w.__ouvinteStatusNuvem(status);
     },
     fechar: () => dom.window.close(),
   };
@@ -551,6 +557,21 @@ test('menu lateral: "Cadastros" agrupa Relatórios, Colunas e Filtros e é recol
   a.fechar();
 });
 
+test('renomear filtro AVULSO (0 relatórios) funciona sem pedir confirmação de perigo — bug corrigido', async () => {
+  const a = await abrirApp();
+  a.store.criarFiltro({ nome: 'Grupos', tipo: 'texto' });
+  await a.aba('Filtros');
+  await esperar(() => a.doc.querySelector('.tabela tbody tr'));
+  const linha = a.todos('.tabela tbody tr').find((tr) => tr.textContent.includes('Grupos'));
+  a.clicar(a.botao('Renomear', linha));
+  await esperar(() => a.modal());
+  a.digitar(a.modal().querySelector('input'), 'Grupo');
+  a.clicar(a.botao('Continuar', a.modal()));
+  await esperar(() => a.store.db.filtrosCadastrados.some((f) => f.nome === 'Grupo'));
+  assert.ok(!a.modal(), 'sem uso em nenhum relatório, não pede confirmação de perigo');
+  a.fechar();
+});
+
 test('aba Filtros: lista os filtros cadastrados, busca, "Ver relatórios" e "Renomear"', async () => {
   const a = await abrirApp();
   a.store.salvarRelatorio({ nome: 'Rel A', modulo: 'ATIVO_ECD', colunas: ['X'], filtros: [{ nome: 'Cliente', tipo: 'texto' }] });
@@ -580,6 +601,9 @@ test('aba Filtros: lista os filtros cadastrados, busca, "Ver relatórios" e "Ren
   await esperar(() => a.modal());
   a.digitar(a.modal().querySelector('input'), 'Comprador');
   a.clicar(a.botao('Continuar', a.modal()));
+  await esperar(() => a.modal() && /Cuidado ao renomear/.test(a.modal().textContent));
+  assert.match(a.modal().textContent, /2 relatórios/);
+  a.clicar(a.botao('Renomear mesmo assim', a.modal()));
   await esperar(() => a.store.db.relatorios.find((r) => r.nome === 'Rel A').filtros[0].nome === 'Comprador');
   assert.equal(a.store.db.relatorios.find((r) => r.nome === 'Rel B').filtros[0].nome, 'Comprador');
   a.fechar();
@@ -640,15 +664,16 @@ test('filtro cadastrado solto aparece como sugestão no editor de relatório', a
   a.store.criarFiltro({ nome: 'Local De Armazenagem', tipo: 'texto' });
   await a.aba('Relatórios');
   a.clicar(a.botao('Novo relatório'));
-  const busca = a.modal().querySelector('.filtro-busca input');
+  const pickerFiltros = a.todos('.picker', a.modal())[1]; // 0 = colunas, 1 = filtros
+  const busca = pickerFiltros.querySelector('input');
   a.digitar(busca, 'armaz');
   busca.dispatchEvent(new a.w.Event('focus'));
-  const itens = a.todos('.filtro-busca .picker-menu li').map((li) => li.textContent);
+  const itens = a.todos('.picker-menu li', pickerFiltros).map((li) => li.textContent);
   assert.ok(itens.some((t) => t.startsWith('Local De Armazenagem')), 'sugere o filtro solto');
 
   // com o nome exato, não oferece criar outro igual (só a sugestão dele)
   a.digitar(busca, 'local de armazenagem');
-  const itensExato = a.todos('.filtro-busca .picker-menu li').map((li) => li.textContent);
+  const itensExato = a.todos('.picker-menu li', pickerFiltros).map((li) => li.textContent);
   assert.ok(itensExato.some((t) => t.startsWith('Local De Armazenagem')));
   assert.ok(!itensExato.some((t) => t.startsWith('Criar filtro')), 'não oferece criar de novo um que já existe');
   a.fechar();
@@ -665,7 +690,7 @@ test('Pesquisar: buscar só pelo nome do relatório lista os que batem, e junto 
 
   // sem nada batendo
   a.digitar(campo, 'zzzz nao existe');
-  assert.match(a.doc.querySelector('.resultados h1').textContent, /Nenhum relatório com esse nome/);
+  assert.match(a.doc.querySelector('.resultados h1').textContent, /Nenhum relatório encontrado/);
 
   // nome + coluna: refina (só ficam os do nome que também têm a coluna)
   a.digitar(campo, 'cheques por cliente');
@@ -833,25 +858,32 @@ test('filtros do relatório: busca e cria pelo campo (igual colunas), salva, edi
   m.querySelector('#campo-modulo').value = 'ATIVO_ECD';
   a.escolherColuna(m.querySelector('.picker'), 'coluna_teste_filtro');
 
-  const buscaFiltro = m.querySelector('.filtro-busca input');
-  const linhas = () => a.todos('.filtro-linha', m);
+  const pickerFiltros = () => a.todos('.picker', a.modal())[1];
+  const buscaFiltro = pickerFiltros().querySelector('input');
+  const chips = () => a.todos('.chip.editavel', pickerFiltros());
 
-  // digita um nome novo e aperta Enter -> cria a linha (tipo Texto por padrão)
+  // digita um nome novo e aperta Enter -> cria o chip (tipo Texto por padrão)
   a.digitar(buscaFiltro, 'Cliente');
   a.tecla(buscaFiltro, 'Enter');
-  assert.equal(linhas().length, 1);
-  assert.equal(linhas()[0].querySelector('input').value, 'Cliente');
+  assert.equal(chips().length, 1);
+  assert.match(chips()[0].textContent, /^Cliente/);
   assert.equal(buscaFiltro.value, '', 'o campo de busca limpa depois de adicionar');
 
-  // outro filtro novo, e ajusta o tipo pra Lista na própria linha criada
+  // outro filtro novo, e ajusta o tipo pra Lista clicando no próprio chip
   a.digitar(buscaFiltro, 'Situacao');
   a.tecla(buscaFiltro, 'Enter');
-  const linha2 = linhas()[1];
-  const selTipo = linha2.querySelector('select');
+  assert.equal(chips().length, 2);
+  a.clicar(chips().find((c) => c.textContent.startsWith('Situacao')));
+  await esperar(() => a.todos('.modal').length === 2);
+  const modalEdicao = a.todos('.modal').at(-1);
+  assert.match(modalEdicao.textContent, /Filtro “Situacao”/);
+  const selTipo = modalEdicao.querySelector('select');
   selTipo.value = 'lista';
   selTipo.dispatchEvent(new a.w.Event('change', { bubbles: true }));
-  assert.equal(linha2.querySelector('.filtro-linha-opcoes').hidden, false, 'campo de opções aparece só pra tipo lista');
-  a.digitar(linha2.querySelectorAll('input')[1], 'Aberto, Fechado , Pendente');
+  assert.equal(modalEdicao.querySelector('input[type="text"]').closest('div').hidden, false, 'campo de opções aparece só pra tipo lista');
+  a.digitar(modalEdicao.querySelector('input[type="text"]'), 'Aberto, Fechado , Pendente');
+  a.clicar(a.botao('Salvar', modalEdicao));
+  await esperar(() => a.todos('.modal').length === 1);
 
   a.clicar(a.botao('Salvar', m));
   await esperar(() => !a.modal());
@@ -862,55 +894,54 @@ test('filtros do relatório: busca e cria pelo campo (igual colunas), salva, edi
     { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado', 'Pendente'] },
   ]);
 
-  // reabre e confere que os valores voltam certinho no editor
+  // reabre e confere que os valores voltam certinho: os chips, e o que tem salvo em Situacao
   a.clicar(a.botao('Relatório Com Filtros'));
   m = a.modal();
-  const linhasReabertas = a.todos('.filtro-linha', m);
-  assert.equal(linhasReabertas.length, 2);
-  assert.equal(linhasReabertas[0].querySelector('input').value, 'Cliente');
-  assert.equal(linhasReabertas[1].querySelectorAll('input')[1].value, 'Aberto, Fechado, Pendente');
+  const chipsReabertos = a.todos('.chip.editavel', pickerFiltros());
+  assert.equal(chipsReabertos.length, 2);
+  a.clicar(chipsReabertos.find((c) => c.textContent.startsWith('Situacao')));
+  await esperar(() => a.todos('.modal').length === 2);
+  assert.equal(a.todos('.modal').at(-1).querySelector('input[type="text"]').value, 'Aberto, Fechado, Pendente');
+  a.clicar(a.botao('Cancelar', a.todos('.modal').at(-1)));
+  await esperar(() => a.todos('.modal').length === 1);
 
   // busca por um filtro já usado em outro relatório (via catálogo) e clica pra adicionar
-  const buscaFiltro2 = m.querySelector('.filtro-busca input');
+  const buscaFiltro2 = pickerFiltros().querySelector('input');
   a.digitar(buscaFiltro2, 'Cliente');
   buscaFiltro2.dispatchEvent(new a.w.Event('focus'));
-  assert.ok(!a.todos('.filtro-busca .picker-menu li').some((li) => /^Criar filtro/.test(li.textContent)), 'filtro já existente não oferece "criar", só a sugestão dele');
+  assert.ok(!a.todos('.picker-menu li', pickerFiltros()).some((li) => /^Criar filtro/.test(li.textContent)), 'filtro já existente não oferece "criar", só a sugestão dele');
   a.fechar();
 });
 
-test('painel "Ver filtros" mostra os campos reproduzidos (texto, período, lista)', async () => {
+test('Pesquisar: busca por filtro sozinha lista direto, e junto com colunas refina (E lógico)', async () => {
   const a = await abrirApp();
-  a.store.salvarRelatorio({
-    nome: 'Relatório Com Filtros Pra Ver',
-    modulo: 'ATIVO_ECD',
-    colunas: ['coluna_ver_filtro'],
-    filtros: [
-      { nome: 'Cliente', tipo: 'texto' },
-      { nome: 'Emissao', tipo: 'periodo' },
-      { nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto', 'Fechado'] },
-    ],
-  });
+  a.store.salvarRelatorio({ nome: 'Rel Situacao Coluna A', modulo: 'ATIVO_ECD', colunas: ['coluna_situacao_a'], filtros: [{ nome: 'Situacao', tipo: 'lista', opcoes: ['Aberto'] }] });
+  a.store.salvarRelatorio({ nome: 'Rel Situacao Coluna B', modulo: 'ATIVO_ECD', colunas: ['coluna_situacao_b'], filtros: [{ nome: 'Situacao', tipo: 'texto' }] });
+  a.store.salvarRelatorio({ nome: 'Rel Sem Filtro', modulo: 'ATIVO_ECD', colunas: ['coluna_situacao_a'] });
   await a.aba('Pesquisar');
-  a.escolherColuna(a.doc.querySelector('.picker'), 'coluna_ver_filtro');
+
+  const pickerFiltros = a.todos('.filtros section')[3].querySelector('.picker');
+  a.escolherColuna(pickerFiltros, 'Situacao');
+  assert.equal(a.todos('.rel').length, 2, 'só filtro, sem coluna: lista direto os dois que têm esse filtro');
+  const nomes = a.todos('.rel-nome').map((n) => n.textContent);
+  assert.ok(nomes.includes('Rel Situacao Coluna A') && nomes.includes('Rel Situacao Coluna B'));
+  assert.ok(!nomes.includes('Rel Sem Filtro'), 'esse não tem o filtro, mesmo tendo a coluna');
+
+  // junto com a coluna que só um dos dois tem: refina pra 1 (E lógico)
+  a.escolherColuna(a.doc.querySelectorAll('.picker')[0], 'coluna_situacao_a');
   a.abrirGrupos();
-  await esperar(() => a.botao('Ver filtros'));
-  a.clicar(a.botao('Ver filtros'));
-  await esperar(() => a.modal());
-  const m = a.modal();
-  assert.match(m.textContent, /Relatório Com Filtros Pra Ver/);
-  assert.equal(a.todos('.filtro-mostra', m).length, 3);
-  assert.ok(m.querySelector('.filtro-periodo'), 'período mostra dois campos com "a" no meio');
-  const listaOpcoes = a.todos('.filtro-mostra select option', m).map((o) => o.textContent);
-  assert.deepEqual(listaOpcoes, ['Aberto', 'Fechado']);
+  assert.equal(a.todos('.rel').length, 1);
+  assert.equal(a.doc.querySelector('.rel-nome').textContent, 'Rel Situacao Coluna A');
   a.fechar();
 });
 
-test('sem filtros cadastrados, não aparece o botão "Ver filtros"', async () => {
+test('sem filtros cadastrados, o campo de busca por filtro não acha nada pra sugerir (mas não quebra)', async () => {
   const a = await abrirApp();
-  a.escolherColuna(a.doc.querySelector('.picker'), 'VALOR');
-  a.abrirGrupos();
-  await esperar(() => a.doc.querySelector('.rel'));
-  assert.ok(!a.botao('Ver filtros'));
+  await a.aba('Pesquisar');
+  const pickerFiltros = a.todos('.filtros section')[3].querySelector('.picker');
+  const entrada = pickerFiltros.querySelector('input');
+  entrada.focus();
+  assert.match(pickerFiltros.querySelector('.picker-menu').textContent, /Nenhum/);
   a.fechar();
 });
 
@@ -1175,4 +1206,59 @@ test('Configurações: painel de Usuários (só admin) lista, cria, troca papel 
   a.clicar(a.botao('Excluir', a.modal()));
   await esperar(() => chamadas.some((c) => c[0] === 'excluir'));
   a.fechar();
+});
+
+test('regressão: vários eventos de status da nuvem seguidos NÃO ficam redesenhando a tela sozinhos (evita o loop de "Gateway Timeout")', async () => {
+  let chamadasListarUsuarios = 0;
+  const nuvem = {
+    entrar: async () => ({ email: 'adm@x.com', papel: 'admin' }),
+    sair: async () => {},
+    status: () => ({ leituraAtiva: true, autenticado: true, email: 'adm@x.com', papel: 'admin', sincronizando: false, ultimoErro: null }),
+    listarUsuarios: async () => { chamadasListarUsuarios++; return []; },
+  };
+  const a = await abrirApp({}, { nuvem });
+  await a.destravarMenu('adm@x.com', 'qualquer');
+  await a.aba('Configurações');
+  await esperar(() => chamadasListarUsuarios === 1); // carregou o painel de usuários uma vez, ao entrar na aba
+
+  // simula uma sequência de status indo e voltando (o que acontece de verdade quando algo falha)
+  for (let i = 0; i < 10; i++) {
+    a.dispararStatusNuvem({ leituraAtiva: true, autenticado: true, email: 'adm@x.com', papel: 'admin', sincronizando: i % 2 === 0, ultimoErro: i % 2 === 0 ? 'Gateway Timeout' : null });
+  }
+  await new Promise((r) => setTimeout(r, 20));
+
+  assert.equal(chamadasListarUsuarios, 1, 'não deve ter recarregado o painel de usuários sozinho a cada status');
+  assert.equal(a.todos('.aviso.erro').length, 0, 'não deve ter empilhado avisos de erro sozinho');
+  a.fechar();
+});
+
+test('interruptor de tema: começa claro, clicar muda pra escuro (aplica na hora e salva), clicar de novo volta', async () => {
+  const a = await abrirApp();
+  const interruptor = a.doc.querySelector('.tema-interruptor');
+  assert.ok(interruptor, 'o interruptor aparece perto da versão');
+  assert.equal(a.doc.documentElement.getAttribute('data-tema'), 'claro');
+  assert.equal(interruptor.getAttribute('aria-pressed'), 'false');
+  assert.equal(a.todos('svg', interruptor).length, 2, 'tem os dois ícones (sol e lua)');
+
+  a.clicar(interruptor);
+  await esperar(() => a.doc.documentElement.getAttribute('data-tema') === 'escuro');
+  assert.equal(interruptor.getAttribute('aria-pressed'), 'true');
+  assert.equal(a.store.db.tema, 'escuro');
+
+  a.clicar(interruptor);
+  await esperar(() => a.doc.documentElement.getAttribute('data-tema') === 'claro');
+  assert.equal(interruptor.getAttribute('aria-pressed'), 'false');
+  assert.equal(a.store.db.tema, 'claro');
+  a.fechar();
+});
+
+test('tema escuro salvo antes continua escuro quando o programa abre de novo', async () => {
+  const a1 = await abrirApp();
+  a1.store.definirTema('escuro');
+  a1.fechar();
+
+  const a2 = await abrirApp({}, { raiz: a1.raiz });
+  assert.equal(a2.doc.documentElement.getAttribute('data-tema'), 'escuro');
+  assert.equal(a2.doc.querySelector('.tema-interruptor').getAttribute('aria-pressed'), 'true');
+  a2.fechar();
 });

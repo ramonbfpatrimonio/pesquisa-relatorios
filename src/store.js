@@ -84,6 +84,8 @@ function validarBanco(obj) {
   // não tem o campo e conta como "já escolheu" (as marcações antigas continuam valendo).
   obj.modulosEscolhidos = obj.modulosEscolhidos === false ? false : true;
   obj.nuvemVinculada = obj.nuvemVinculada === true;
+  // Tema (claro/escuro) é preferência só deste computador — nunca vai pra nuvem.
+  obj.tema = obj.tema === 'escuro' ? 'escuro' : 'claro';
   obj.atualizadoEm = obj.atualizadoEm || null;
   return obj;
 }
@@ -250,6 +252,13 @@ class Store {
     return this.db;
   }
 
+  // Tema (claro/escuro) — preferência só deste computador, sobrevive a atualizações do programa.
+  definirTema(tema) {
+    this.db.tema = tema === 'escuro' ? 'escuro' : 'claro';
+    this._gravar();
+    return this.db;
+  }
+
   // ---------- colunas ----------
 
   // Renomeia a coluna em todos os relatórios. Se o novo nome já existe, as duas viram uma só.
@@ -264,7 +273,13 @@ class Store {
       r.colunas = unicos(r.colunas);
       alterados++;
     }
-    if (!alterados) throw new Error('Coluna não encontrada.');
+    // também troca na lista "avulsa" (criada pelo botão Nova coluna, talvez ainda em nenhum relatório)
+    let mudouAvulsa = false;
+    if (this.db.colunasCadastradas.includes(de)) {
+      this.db.colunasCadastradas = unicos(this.db.colunasCadastradas.map((c) => (c === de ? novo : c)));
+      mudouAvulsa = true;
+    }
+    if (!alterados && !mudouAvulsa) throw new Error('Coluna não encontrada.');
     this.db.ignorados = this.db.ignorados.filter((k) => !k.split('|').includes(de));
     this._gravar();
     return { db: this.db, alterados };
@@ -289,7 +304,15 @@ class Store {
         alterados++;
       }
     }
-    if (!alterados) throw new Error('Filtro não encontrado.');
+    // também troca na lista "avulsa" (criada pelo botão Novo filtro, talvez ainda em nenhum relatório)
+    let mudouAvulso = false;
+    const iAvulso = this.db.filtrosCadastrados.findIndex((f) => nomeComparavel(f.nome) === nomeComparavel(de));
+    if (iAvulso >= 0) {
+      this.db.filtrosCadastrados[iAvulso] = { ...this.db.filtrosCadastrados[iAvulso], nome: novo };
+      this.db.filtrosCadastrados = limparFiltros(this.db.filtrosCadastrados);
+      mudouAvulso = true;
+    }
+    if (!alterados && !mudouAvulso) throw new Error('Filtro não encontrado.');
     this._gravar();
     return { db: this.db, alterados };
   }

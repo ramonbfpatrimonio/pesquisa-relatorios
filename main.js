@@ -44,6 +44,7 @@ function obterBaseLocalParaNuvem() {
     modulosOcultos: store.db.modulosOcultos,
     modulosEscolhidos: store.db.modulosEscolhidos,
     nuvemVinculada: store.db.nuvemVinculada,
+    tema: store.db.tema,
   };
 }
 
@@ -191,6 +192,11 @@ function iniciar() {
     abrirPasta: async (pasta) => {
       const erro = await shell.openPath(pasta);
       if (erro) throw new Error('Não foi possível abrir a pasta: ' + erro);
+      return true;
+    },
+    abrirArquivo: async (arquivo) => {
+      const erro = await shell.openPath(arquivo);
+      if (erro) throw new Error('Não foi possível abrir o arquivo: ' + erro);
       return true;
     },
     verificarAtualizacoes,

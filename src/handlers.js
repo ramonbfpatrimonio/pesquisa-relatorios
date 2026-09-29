@@ -24,7 +24,7 @@ const MODELO_CSV_RELATORIOS =
   'ATIVO_LOG;Vendas por Vendedor;Mostra o total vendido por cada vendedor no período.;"VENDEDOR;VALOR;DATA;CLIENTE";"Vendedor:texto;Periodo:periodo"\r\n' +
   'ATIVO_ADM;Cheques Pendentes;;"CHEQUE;BANCO;VENCIMENTO";"Cliente:texto;Emissao:periodo;Situacao:lista:Aberto,Compensado,Devolvido,Descontado,Garantia,Resgatado"\r\n';
 
-function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, verificarAtualizacoes, baixarAtualizacao, instalarAtualizacao, nuvem }) {
+function criarHandlers({ store, dialogo, abrirPasta, abrirArquivo, salvarPastaBackup, versao, verificarAtualizacoes, baixarAtualizacao, instalarAtualizacao, nuvem }) {
   // Texto de "o que mudou" dessa versão, editado à mão em data/novidades.txt antes de publicar.
   // Cada build carrega o texto que estava lá naquele momento — versões antigas instaladas mantêm o texto delas.
   function lerNovidades() {
@@ -49,6 +49,7 @@ function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, 
     adicionarModulo: (nome) => store.adicionarModulo(nome),
     excluirModulo: (nome) => store.excluirModulo(nome),
     definirModulosOcultos: (nomes) => store.definirModulosOcultos(nomes),
+    definirTema: (tema) => store.definirTema(tema),
     renomearColuna: (de, para) => store.renomearColuna(de, para),
     renomearFiltro: (de, para) => store.renomearFiltro(de, para),
     criarColuna: (nome) => store.criarColuna(nome),
@@ -86,6 +87,23 @@ function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, 
       const nomeArquivo = tipo === 'filtro' ? rel.imagemFiltro : rel.imagem;
       if (nuvem.podeEscrever()) nuvem.subirImagem(path.join(store.pastaImagens, nomeArquivo), nomeArquivo).catch(() => {});
       return db;
+    },
+    // Abre a imagem no visualizador padrão do Windows — tamanho e formato originais, de verdade
+    // (o que aparece dentro do programa é só uma prévia, redimensionada pra caber na tela).
+    abrirImagemNoSistema: async (id, tipo) => {
+      const rel = store.db.relatorios.find((r) => r.id === id);
+      const nomeArquivo = rel && (tipo === 'filtro' ? rel.imagemFiltro : rel.imagem);
+      if (!nomeArquivo) throw new Error('Esse relatório não tem essa imagem.');
+      const caminho = path.join(store.pastaImagens, nomeArquivo);
+      if (!fs.existsSync(caminho) && nuvem.leituraAtiva) {
+        try {
+          await nuvem.baixarImagem(nomeArquivo, caminho);
+        } catch (_) {
+          /* mostra o erro de "não encontrada" abaixo */
+        }
+      }
+      if (!fs.existsSync(caminho)) throw new Error('O arquivo da imagem não foi encontrado.');
+      await abrirArquivo(caminho);
     },
     importarImagensDePasta: async () => {
       const pasta = await dialogo.abrirPastaImagens();

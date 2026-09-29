@@ -8,6 +8,7 @@
     info: null,
     aba: 'pesquisar',
     modulosSelecionados: new Set(),
+    filtrosSelecionados: new Set(),
     colunas: [],
     gruposAbertos: new Set(),
     moduloAberto: false,
@@ -321,7 +322,13 @@
       titulo: `${rel.nome} — ${ROTULO_IMAGEM[tipo].toLowerCase()}`,
       larga: true,
       corpo: r.dados
-        ? h('img', { class: 'previa', src: r.dados, alt: `${ROTULO_IMAGEM[tipo]}: ${rel.nome}` })
+        ? h('img', {
+            class: 'previa',
+            src: r.dados,
+            alt: `${ROTULO_IMAGEM[tipo]}: ${rel.nome}`,
+            title: 'Clique pra abrir no tamanho original',
+            onclick: () => chamar('abrirImagemNoSistema', rel.id, tipo),
+          })
         : h('p', {}, 'O arquivo da imagem não foi encontrado. Anexe a imagem de novo em Relatórios.'),
       acoes: [{ rotulo: 'Fechar', tipo: 'primario' }],
     });
@@ -347,6 +354,74 @@
       svg.append(c);
     }
     return svg;
+  }
+
+  // Sol (claro) e lua (escuro) pro interruptor de tema — desenhados na hora, sem depender de fonte/emoji.
+  function iconeTemaSvg(tipo) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '13');
+    svg.setAttribute('height', '13');
+    svg.setAttribute('aria-hidden', 'true');
+    if (tipo === 'sol') {
+      svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '1.4');
+      svg.setAttribute('stroke-linecap', 'round');
+      const centro = document.createElementNS(NS, 'circle');
+      centro.setAttribute('cx', '8');
+      centro.setAttribute('cy', '8');
+      centro.setAttribute('r', '3');
+      svg.append(centro);
+      for (const [x1, y1, x2, y2] of [
+        [8, 0.8, 8, 2.4],
+        [8, 13.6, 8, 15.2],
+        [0.8, 8, 2.4, 8],
+        [13.6, 8, 15.2, 8],
+        [2.7, 2.7, 3.8, 3.8],
+        [12.2, 12.2, 13.3, 13.3],
+        [2.7, 13.3, 3.8, 12.2],
+        [12.2, 3.8, 13.3, 2.7],
+      ]) {
+        const raio = document.createElementNS(NS, 'line');
+        raio.setAttribute('x1', x1);
+        raio.setAttribute('y1', y1);
+        raio.setAttribute('x2', x2);
+        raio.setAttribute('y2', y2);
+        svg.append(raio);
+      }
+    } else {
+      svg.setAttribute('fill', 'currentColor');
+      const lua = document.createElementNS(NS, 'path');
+      lua.setAttribute('d', 'M13.8 10.2A6 6 0 1 1 5.8 2.2a6.6 6.6 0 1 0 8 8z');
+      svg.append(lua);
+    }
+    return svg;
+  }
+
+  // Aplica de verdade a troca de cor da tela (só CSS reagindo ao atributo).
+  function aplicarTema(tema) {
+    document.documentElement.setAttribute('data-tema', tema === 'escuro' ? 'escuro' : 'claro');
+  }
+
+  // Interruptor sol/lua — troca na hora (sem esperar o servidor) e salva por baixo, só neste computador.
+  function criarInterruptorTema() {
+    const botao = h('button', {
+      type: 'button',
+      class: 'tema-interruptor',
+      'aria-pressed': String(estado.db.tema === 'escuro'),
+      'aria-label': 'Alternar entre tema claro e escuro',
+      onclick: async () => {
+        const novo = estado.db.tema === 'escuro' ? 'claro' : 'escuro';
+        estado.db.tema = novo; // otimista: muda a tela na hora
+        aplicarTema(novo);
+        botao.setAttribute('aria-pressed', String(novo === 'escuro'));
+        const r = await chamarSemAviso('definirTema', novo);
+        if (r.ok) atualizarBanco(r.dados);
+      },
+    }, iconeTemaSvg('sol'), h('span', { class: 'tema-trilho' }, h('span', { class: 'tema-bola' })), iconeTemaSvg('lua'));
+    return botao;
   }
 
   // Botão-ícone redondo (igual ao "?") que abre uma das imagens do relatório.
@@ -520,8 +595,12 @@
   // Emissão/Situação) — uma linha por filtro: nome, tipo, e opções só quando o tipo é lista.
   // Campo de buscar/criar filtro — mesmo padrão do campo de colunas: digita, aparecem sugestões
   // (os filtros já usados em outros relatórios), clica ou aperta Enter pra adicionar.
-  function criarBuscaFiltro({ opcoes, jaTemNome, aoEscolher }) {
-    let itens = [];
+  // Editor de filtros do relatório — mesma caixa e o mesmo jeito de usar que o de colunas: chips
+  // dentro de uma caixinha só, com o campo de busca/criar embutido no fim dela. Clicar num chip
+  // abre uma janelinha pra ajustar o tipo e as opções (nome só muda pela busca/renomear).
+  function criarEditorFiltros(iniciais) {
+    let itens = (iniciais || []).map((f) => ({ nome: f.nome, tipo: f.tipo, opcoes: f.opcoes }));
+    let sugeridos = [];
     let ativo = -1;
     let aberto = false;
     const idMenu = 'filtro-menu-' + Math.random().toString(36).slice(2, 8);
@@ -532,14 +611,66 @@
       'aria-autocomplete': 'list',
       'aria-controls': idMenu,
       'aria-expanded': 'false',
-      'aria-label': 'Buscar ou criar filtro',
-      placeholder: 'Digite pra buscar um filtro já usado, ou criar um novo',
+      'aria-label': 'Adicionar filtro',
       autocomplete: 'off',
       spellcheck: 'false',
     });
     const menu = h('ul', { class: 'picker-menu', id: idMenu, role: 'listbox', hidden: true, onmousedown: (e) => e.preventDefault() });
     const caixa = h('div', { class: 'picker-caixa', onclick: () => entrada.focus() }, entrada);
-    const raiz = h('div', { class: 'picker filtro-busca' }, caixa, menu);
+    const raiz = h('div', { class: 'picker' }, caixa, menu);
+
+    function jaTem(nome) {
+      return itens.some((it) => B.normalizarBusca(it.nome) === B.normalizarBusca(nome));
+    }
+
+    function abrirEdicao(i) {
+      const it = itens[i];
+      const campoTipo = h('select', {}, Object.entries(B.TIPOS_FILTRO).map(([valor, rotulo]) => h('option', { value: valor }, rotulo)));
+      campoTipo.value = B.TIPOS_FILTRO[it.tipo] ? it.tipo : 'texto';
+      const campoOpcoes = h('input', { type: 'text', placeholder: 'Ex.: Aberto, Fechado, Pendente', value: (it.opcoes || []).join(', ') });
+      const blocoOpcoes = h('div', {}, h('label', { class: 'rotulo' }, 'Opções (separadas por vírgula)'), campoOpcoes);
+      const ehLista = () => campoTipo.value === 'lista' || campoTipo.value === 'lista_multipla';
+      const atualizarVisivel = () => { blocoOpcoes.hidden = !ehLista(); };
+      campoTipo.addEventListener('change', atualizarVisivel);
+      atualizarVisivel();
+      abrirModal({
+        titulo: `Filtro “${it.nome}”`,
+        corpo: [h('div', {}, h('label', { class: 'rotulo' }, 'Tipo'), campoTipo), blocoOpcoes],
+        acoes: [
+          { rotulo: 'Cancelar' },
+          {
+            rotulo: 'Salvar',
+            tipo: 'primario',
+            aoClicar: () => {
+              const novo = { nome: it.nome, tipo: campoTipo.value };
+              if (ehLista()) novo.opcoes = campoOpcoes.value.split(',').map((o) => o.trim()).filter(Boolean);
+              itens[i] = novo;
+              desenharChips();
+            },
+          },
+        ],
+      });
+    }
+
+    function desenharChips() {
+      caixa.querySelectorAll('.chip.editavel').forEach((e) => e.remove());
+      itens.forEach((it, i) => {
+        caixa.insertBefore(
+          h(
+            'span',
+            { class: 'chip editavel', title: 'Clique pra ajustar o tipo/opções', onclick: () => abrirEdicao(i) },
+            it.nome,
+            h('button', {
+              type: 'button',
+              'aria-label': 'Remover filtro ' + it.nome,
+              onclick: (e) => { e.stopPropagation(); itens.splice(i, 1); desenharChips(); },
+            }, '×')
+          ),
+          entrada
+        );
+      });
+      entrada.placeholder = itens.length ? 'Adicionar outro filtro' : 'Digite pra buscar um filtro já usado, ou criar um novo';
+    }
 
     function marcarAtivo(rolar) {
       [...menu.children].forEach((li, i) => {
@@ -558,8 +689,8 @@
         entrada.setAttribute('aria-expanded', 'false');
         return;
       }
-      if (!itens.length) menu.append(h('li', { class: 'vazio' }, 'Nenhum filtro com esse nome'));
-      itens.forEach((it, i) => {
+      if (!sugeridos.length) menu.append(h('li', { class: 'vazio' }, 'Nenhum filtro com esse nome'));
+      sugeridos.forEach((it, i) => {
         menu.append(
           h(
             'li',
@@ -584,12 +715,13 @@
     function atualizarMenu() {
       const texto = entrada.value.trim();
       const busca = B.normalizarBusca(texto);
-      const catalogo = opcoes();
-      itens = (busca ? catalogo.filter((f) => B.normalizarBusca(f.nome).includes(busca)) : catalogo.slice()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+      const catalogo = filtrosComCadastrados(estado.db.relatorios);
+      sugeridos = (busca ? catalogo.filter((f) => B.normalizarBusca(f.nome).includes(busca)) : catalogo.slice()).sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
       const nomeLimpo = texto.replace(/\s+/g, ' ').trim();
       const existeExato = catalogo.some((f) => B.normalizarBusca(f.nome) === busca);
-      if (nomeLimpo && !existeExato && !jaTemNome(nomeLimpo)) itens.push({ nome: nomeLimpo, novo: true });
-      ativo = itens.length ? 0 : -1;
+      if (nomeLimpo && !existeExato && !jaTem(nomeLimpo)) sugeridos.push({ nome: nomeLimpo, novo: true });
+      sugeridos = sugeridos.filter((it) => it.novo || !jaTem(it.nome)); // já adicionados não aparecem de novo na lista
+      ativo = sugeridos.length ? 0 : -1;
       desenharMenu();
       marcarAtivo(false);
     }
@@ -598,11 +730,12 @@
     function fecharMenu() { aberto = false; desenharMenu(); }
 
     function escolher(i) {
-      const it = itens[i];
+      const it = sugeridos[i];
       if (!it) return;
-      if (!it.novo && jaTemNome(it.nome)) { aviso(`“${it.nome}” já está na lista.`); return; }
+      if (jaTem(it.nome)) { aviso(`“${it.nome}” já está na lista.`); return; }
+      itens.push(it.novo ? { nome: it.nome, tipo: 'texto' } : { nome: it.nome, tipo: it.tipo, opcoes: it.opcoes });
       entrada.value = '';
-      aoEscolher(it);
+      desenharChips();
       if (aberto) atualizarMenu();
     }
 
@@ -613,8 +746,8 @@
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         if (!aberto) return abrir();
-        if (!itens.length) return;
-        ativo = (ativo + (e.key === 'ArrowDown' ? 1 : -1) + itens.length) % itens.length;
+        if (!sugeridos.length) return;
+        ativo = (ativo + (e.key === 'ArrowDown' ? 1 : -1) + sugeridos.length) % sugeridos.length;
         marcarAtivo(true);
       } else if (e.key === 'Enter') {
         e.preventDefault();
@@ -624,69 +757,16 @@
           e.stopPropagation();
           fecharMenu();
         }
+      } else if (e.key === 'Backspace' && !entrada.value && itens.length) {
+        itens.pop();
+        desenharChips();
       }
     });
 
-    return { el: raiz };
-  }
-
-  function criarEditorFiltros(iniciais) {
-    const linhasEl = h('div', { class: 'filtros-editor-linhas' });
-    const registros = [];
-
-    function criarLinha(valores) {
-      const v = valores || {};
-      const campoNome = h('input', { type: 'text', placeholder: 'Nome do filtro (ex.: Cliente)', 'aria-label': 'Nome do filtro', value: v.nome || '' });
-      const campoTipo = h('select', { 'aria-label': 'Tipo do filtro' }, Object.entries(B.TIPOS_FILTRO).map(([valor, rotulo]) => h('option', { value: valor }, rotulo)));
-      campoTipo.value = B.TIPOS_FILTRO[v.tipo] ? v.tipo : 'texto';
-      const campoOpcoes = h('input', { type: 'text', placeholder: 'Opções separadas por vírgula (ex.: Aberto, Fechado)', 'aria-label': 'Opções da lista', value: (v.opcoes || []).join(', ') });
-      const blocoOpcoes = h('div', { class: 'filtro-linha-opcoes' }, campoOpcoes);
-      const ehLista = () => campoTipo.value === 'lista' || campoTipo.value === 'lista_multipla';
-      const atualizarOpcoesVisiveis = () => { blocoOpcoes.hidden = !ehLista(); };
-      campoTipo.addEventListener('change', atualizarOpcoesVisiveis);
-      atualizarOpcoesVisiveis();
-      const botaoRemover = h(
-        'button',
-        { type: 'button', class: 'btn pequeno discreto', 'aria-label': 'Remover este filtro', onclick: () => { linha.remove(); registros.splice(registros.indexOf(registro), 1); } },
-        '× Remover'
-      );
-      const linha = h('div', { class: 'filtro-linha' }, campoNome, campoTipo, blocoOpcoes, botaoRemover);
-      const registro = { nome: campoNome, tipo: campoTipo, opcoes: campoOpcoes };
-      registros.push(registro);
-      linhasEl.append(linha);
-      return { campoNome, campoTipo, campoOpcoes };
-    }
-
-    (iniciais || []).forEach(criarLinha);
-
-    // Busca (igual a de colunas): digite pra achar um filtro já usado em outro relatório e clique
-    // pra adicionar (já vem com o tipo/opções que ele tinha lá — dá pra ajustar depois). Digitar um
-    // nome novo e apertar Enter cria um filtro do zero, tipo Texto por padrão.
-    const buscaFiltro = criarBuscaFiltro({
-      opcoes: () => filtrosComCadastrados(estado.db.relatorios),
-      jaTemNome: (nome) => registros.some((r) => B.normalizarBusca(r.nome.value) === B.normalizarBusca(nome)),
-      aoEscolher: (item) => {
-        const { campoNome } = criarLinha(item.novo ? { nome: item.nome, tipo: 'texto' } : item);
-        campoNome.focus();
-      },
-    });
-
+    desenharChips();
     return {
-      el: h('div', { class: 'filtros-editor' }, linhasEl, h('div', { class: 'rotulo filtros-editor-rotulo' }, 'Adicionar filtro'), buscaFiltro.el),
-      valores() {
-        return registros
-          .map((r) => {
-            const nome = r.nome.value.replace(/\s+/g, ' ').trim();
-            if (!nome) return null;
-            const tipo = r.tipo.value;
-            const item = { nome, tipo };
-            if (tipo === 'lista' || tipo === 'lista_multipla') {
-              item.opcoes = r.opcoes.value.split(',').map((o) => o.trim()).filter(Boolean);
-            }
-            return item;
-          })
-          .filter(Boolean);
-      },
+      el: raiz,
+      valores: () => itens.map((it) => ({ ...it })),
     };
   }
 
@@ -885,6 +965,13 @@
     }
     const nomeBusca = B.normalizarBusca(estado.nomeBusca || '');
     if (nomeBusca) lista = lista.filter((r) => B.normalizarBusca(r.nome).includes(nomeBusca));
+    if (estado.filtrosSelecionados.size) {
+      const nomesBuscados = [...estado.filtrosSelecionados].map((n) => B.normalizarBusca(n));
+      lista = lista.filter((r) => {
+        const nomesDoRel = new Set((r.filtros || []).map((f) => B.normalizarBusca(f.nome)));
+        return nomesBuscados.every((n) => nomesDoRel.has(n));
+      });
+    }
     return lista;
   }
 
@@ -941,6 +1028,17 @@
         atualizarPesquisa();
       },
     });
+    ui.pickerFiltros = criarPicker({
+      opcoes: () => filtrosComCadastrados(relatoriosNaPesquisa()).map((f) => ({ nome: f.nome, qtd: f.qtd })),
+      valores: [...estado.filtrosSelecionados],
+      placeholder: 'Digite parte do nome do filtro',
+      rotulo: 'Filtros que o relatório precisa ter',
+      aoMudar: (v) => {
+        estado.filtrosSelecionados = new Set(v);
+        estado.gruposAbertos.clear();
+        atualizarPesquisa();
+      },
+    });
     ui.limpar = h('button', { type: 'button', class: 'btn', onclick: () => { ui.picker.definir([]); estado.colunas = []; estado.gruposAbertos.clear(); atualizarPesquisa(); ui.picker.focar(); } }, 'Limpar colunas');
     ui.exportar = h('button', { type: 'button', class: 'btn', onclick: exportarResultado }, 'Exportar para Excel (CSV)');
     ui.resultados = h('div', { class: 'resultados', tabindex: '-1' });
@@ -970,6 +1068,13 @@
         h('span', { class: 'rotulo' }, 'Colunas que o relatório precisa ter'),
         ui.picker.el,
         h('p', { class: 'ajuda' }, 'Escolha uma ou mais. Os relatórios aparecem agrupados por quantas dessas colunas eles têm.')
+      ),
+      h(
+        'section',
+        {},
+        h('span', { class: 'rotulo' }, 'Filtros que o relatório precisa ter'),
+        ui.pickerFiltros.el,
+        h('p', { class: 'ajuda' }, 'Escolha um ou mais filtros (da lista cadastrada em Filtros). Mostra só quem tem todos os escolhidos.')
       ),
       h('div', { class: 'acoes-filtro' }, ui.limpar, ui.exportar)
     );
@@ -1111,42 +1216,6 @@
     return container;
   }
 
-  // Mostra os filtros do relatório (a telinha do sistema antes de rodar) reproduzidos na tela,
-  // só pra consulta — não está ligado a nenhum banco de dados de verdade.
-  function campoFiltroMostra(f) {
-    if (f.tipo === 'periodo') {
-      return h(
-        'div',
-        { class: 'filtro-periodo' },
-        h('input', { type: 'text', disabled: true, placeholder: 'dd/mm/aaaa' }),
-        h('span', {}, 'a'),
-        h('input', { type: 'text', disabled: true, placeholder: 'dd/mm/aaaa' })
-      );
-    }
-    if (f.tipo === 'data') return h('input', { type: 'text', disabled: true, placeholder: 'dd/mm/aaaa' });
-    if (f.tipo === 'numero') return h('input', { type: 'text', disabled: true, placeholder: '0' });
-    if (f.tipo === 'lista' || f.tipo === 'lista_multipla') {
-      const tam = String(Math.min(6, Math.max(3, (f.opcoes || []).length || 1)));
-      return h(
-        'select',
-        { multiple: f.tipo === 'lista_multipla', disabled: true, size: tam },
-        (f.opcoes && f.opcoes.length ? f.opcoes : ['(sem opções cadastradas)']).map((o) => h('option', {}, o))
-      );
-    }
-    return h('input', { type: 'text', disabled: true });
-  }
-
-  function abrirFiltrosRelatorio(rel) {
-    abrirModal({
-      titulo: `Filtros de ${rel.nome}`,
-      corpo: [
-        h('p', { class: 'ajuda' }, 'Assim aparecem os filtros dentro do relatório, no sistema. É só pra consulta — não filtra nada de verdade aqui.'),
-        ...rel.filtros.map((f) => h('div', { class: 'filtro-mostra' }, h('span', { class: 'rotulo' }, f.nome), campoFiltroMostra(f))),
-      ],
-      acoes: [{ rotulo: 'Fechar', tipo: 'primario' }],
-    });
-  }
-
   function linhaRelatorio(item, escolhidas) {
     const { rel } = item;
     return h(
@@ -1156,8 +1225,7 @@
         'div',
         { class: 'rel-topo' },
         h('span', { class: 'rel-nome' }, rel.nome),
-        h('span', { class: 'rel-modulo' }, rel.modulo),
-        rel.filtros && rel.filtros.length ? h('button', { type: 'button', class: 'btn discreto pequeno', onclick: () => abrirFiltrosRelatorio(rel) }, 'Ver filtros') : null
+        h('span', { class: 'rel-modulo' }, rel.modulo)
       ),
       rel.colunas.length ? chipsDeColunas(rel, escolhidas) : h('p', { class: 'rel-sem-colunas' }, 'Sem colunas cadastradas.'),
       rel.funcionalidade || rel.imagem || rel.imagemFiltro
@@ -1190,6 +1258,14 @@
   // já respeitando os módulos marcados e os escondidos em Configurações.
   function desenharResultadosPorNome(alvo) {
     const lista = relatoriosNaPesquisa().slice().sort((a, b) => a.nome.localeCompare(b.nome, 'pt'));
+    const nome = estado.nomeBusca.trim();
+    const filtros = [...estado.filtrosSelecionados];
+    const partes = [];
+    if (nome) partes.push(`o nome contém “${nome}”`);
+    if (filtros.length) partes.push(`${filtros.length > 1 ? 'tem os filtros' : 'tem o filtro'} ${filtros.map((f) => `“${f}”`).join(', ')}`);
+    const legenda = partes.length
+      ? `${partes[0].charAt(0).toUpperCase()}${partes[0].slice(1)}${partes[1] ? ' e ' + partes[1] : ''}. Pesquisando em ${nomeEscopo()}.`
+      : `Pesquisando em ${nomeEscopo()}.`;
     alvo.append(
       h(
         'div',
@@ -1197,8 +1273,8 @@
         h(
           'div',
           {},
-          h('h1', {}, lista.length ? plural(lista.length, 'relatório encontrado', 'relatórios encontrados') : 'Nenhum relatório com esse nome'),
-          h('p', { class: 'ajuda' }, `Nome contém “${estado.nomeBusca.trim()}”. Pesquisando em ${nomeEscopo()}.`)
+          h('h1', {}, lista.length ? plural(lista.length, 'relatório encontrado', 'relatórios encontrados') : 'Nenhum relatório encontrado'),
+          h('p', { class: 'ajuda' }, legenda)
         )
       ),
       ...lista.map((rel) => linhaRelatorio({ rel }, new Set()))
@@ -1210,7 +1286,7 @@
     alvo.replaceChildren();
     const n = estado.colunas.length;
     if (!n) {
-      if (B.normalizarBusca(estado.nomeBusca || '')) desenharResultadosPorNome(alvo);
+      if (B.normalizarBusca(estado.nomeBusca || '') || estado.filtrosSelecionados.size) desenharResultadosPorNome(alvo);
       else alvo.append(vazioPesquisa());
       return;
     }
@@ -1409,7 +1485,7 @@
         area.replaceChildren();
         if (atual && atual[campo]) {
           const r = await chamar('obterImagem', rel.id, tipo);
-          if (r && r.dados) area.append(h('img', { class: 'previa', src: r.dados, alt: `${ROTULO_IMAGEM[tipo]} anexada` }));
+          if (r && r.dados) area.append(h('img', { class: 'previa', src: r.dados, alt: `${ROTULO_IMAGEM[tipo]} anexada`, title: 'Clique pra abrir no tamanho original', onclick: () => chamar('abrirImagemNoSistema', rel.id, tipo) }));
           else area.append(h('p', { class: 'ajuda' }, 'A imagem anexada não foi encontrada no disco. Anexe de novo.'));
         } else if (tipo === 'filtro' && atual && atual.imagemOriginal) {
           area.append(h('p', { class: 'ajuda' }, `Na planilha original este relatório apontava para “${atual.imagemOriginal}”.`));
@@ -1721,20 +1797,29 @@
     });
   }
 
-  async function renomearFiltroPrompt(nome) {
+  async function renomearFiltroPrompt(item) {
     const digitado = await pedirTexto({
       titulo: 'Renomear filtro',
       rotulo: 'Novo nome',
-      valor: nome,
+      valor: item.nome,
       ajuda: 'A mudança vale em todos os relatórios que têm esse filtro. O tipo e as opções de cada um continuam os mesmos.',
     });
     if (digitado === null) return;
     const novo = digitado.replace(/\s+/g, ' ').trim();
-    if (!novo || novo === nome) return;
-    const r = await chamar('renomearFiltro', nome, novo);
+    if (!novo || novo === item.nome) return;
+    if (item.qtd > 0) {
+      const ok = await confirmar({
+        titulo: 'Cuidado ao renomear',
+        mensagem: `Esse filtro está em ${plural(item.qtd, 'relatório', 'relatórios')}. Renomear vale pra todos eles de uma vez — não dá pra desfazer sozinho. Quer continuar?`,
+        rotulo: 'Renomear mesmo assim',
+        perigo: true,
+      });
+      if (!ok) return;
+    }
+    const r = await chamar('renomearFiltro', item.nome, novo);
     if (!r) return;
     atualizarBanco(r.dados.db);
-    aviso(plural(r.dados.alterados, 'relatório atualizado', 'relatórios atualizados'));
+    aviso(r.dados.alterados ? plural(r.dados.alterados, 'relatório atualizado', 'relatórios atualizados') : 'Filtro renomeado.');
     render();
   }
 
@@ -1796,7 +1881,7 @@
                   'td',
                   { class: 'acoes' },
                   h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => abrirRelatoriosDoFiltro(f) }, 'Ver relatórios'),
-                  h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => renomearFiltroPrompt(f.nome) }, 'Renomear')
+                  h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => renomearFiltroPrompt(f) }, 'Renomear')
                 )
               )
             )
@@ -2415,6 +2500,9 @@
     }
     estado.db = r.dados.db;
     estado.info = r.dados.info;
+    aplicarTema(estado.db.tema);
+    const elTema = document.getElementById('tema-app');
+    if (elTema) elTema.replaceChildren(criarInterruptorTema());
     const elVersao = document.getElementById('versao-app');
     if (elVersao) {
       elVersao.replaceChildren(

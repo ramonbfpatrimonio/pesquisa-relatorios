@@ -229,6 +229,22 @@ test('mudança na nuvem (tempo real) chega no aoAtualizarDados, e várias mudan�
   assert.equal(ultimo.relatorios.length, 2);
 });
 
+test('sincronizarRetratoCom evita reenviar à toa depois que quem chamou normaliza o banco (ex.: store.js)', async () => {
+  const { nuvem, cliente } = await novaNuvemSincronizada({
+    linhasIniciais: { relatorios: [{ id: 'r1', modulo: 'ATIVO_ADM', nome: 'Rel 1', colunas: ['valor'] }] }, // minúsculo, "sujo"
+  });
+  await nuvem.entrar('patrimonio@patrimonio.com', 'senha-certa');
+
+  // sem sincronizarRetratoCom, o "normalizado" (colunas maiúsculas) pareceria diferente do que
+  // a nuvem tinha — e mandaria de novo à toa. Simula o que store.js faz: normaliza ao aplicar.
+  const normalizado = { modulos: [], relatorios: [{ id: 'r1', modulo: 'ATIVO_ADM', nome: 'Rel 1', colunas: ['VALOR'], filtros: [], funcionalidade: null, imagem: null, imagemOriginal: null, imagemFiltro: null }] };
+  nuvem.sincronizarRetratoCom(normalizado);
+
+  const r = await nuvem.registrarMudancaLocal(normalizado); // mesmíssimo banco normalizado, nada mudou de fato
+  assert.equal(r.enviado, false, 'não reenvia à toa depois de sincronizar o retrato');
+  assert.equal(cliente()._chamadas.upsert.length, 0);
+});
+
 test('sair() derruba a permissão de escrita, mas a leitura em tempo real continua', async () => {
   const { nuvem, dbsRecebidos, cliente } = await novaNuvemSincronizada();
   await nuvem.entrar('patrimonio@patrimonio.com', 'senha-certa');

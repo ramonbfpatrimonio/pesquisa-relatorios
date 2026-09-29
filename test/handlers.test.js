@@ -39,6 +39,7 @@ function montar(dialogo = {}, extra = {}) {
     dialogo,
     versao: '1.0.0-teste',
     abrirPasta: async (p) => abertas.push(p),
+    abrirArquivo: async (a) => abertas.push(a),
     salvarPastaBackup: (p) => { pastaSalva = p; },
     verificarAtualizacoes: async () => ({ emDesenvolvimento: true }),
     baixarAtualizacao: async () => 'baixando',
@@ -265,4 +266,29 @@ test('obterImagem baixa da nuvem quando o arquivo não existe localmente ainda',
   const r = await handlers.obterImagem(rel.id, 'relatorio');
   assert.deepEqual(baixadas, [rel.imagem]);
   assert.match(r.dados, /^data:image\/gif;base64,/);
+});
+
+test('abrirImagemNoSistema abre o arquivo de verdade (não uma cópia) no visualizador do sistema', async () => {
+  const abertos = [];
+  const { handlers, store } = montar(
+    { abrirImagem: async () => arquivoImagemTeste },
+    { abrirArquivo: async (caminho) => abertos.push(caminho) }
+  );
+  const raiz0 = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-abrir-img-'));
+  var arquivoImagemTeste = path.join(raiz0, 'a.gif');
+  fs.writeFileSync(arquivoImagemTeste, 'GIF89a');
+  const id = store.db.relatorios[0].id;
+  await handlers.anexarImagem(id, 'relatorio');
+  const rel = store.db.relatorios.find((r) => r.id === id);
+
+  const r = await handlers.abrirImagemNoSistema(id, 'relatorio');
+  assert.equal(r.ok, true);
+  assert.deepEqual(abertos, [path.join(store.pastaImagens, rel.imagem)]);
+});
+
+test('abrirImagemNoSistema dá erro claro quando não tem essa imagem', async () => {
+  const { handlers, store } = montar();
+  const r = await handlers.abrirImagemNoSistema(store.db.relatorios[0].id, 'filtro');
+  assert.equal(r.ok, false);
+  assert.match(r.erro, /não tem essa imagem/);
 });
