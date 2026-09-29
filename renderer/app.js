@@ -18,11 +18,12 @@
     nomeBusca: '',
     menuOculto: true,
     cadastrosAberto: true,
+    nuvemPapel: null, // 'admin' | 'editor' | null — só some quando faz login (Ctrl+Shift+B)
+    nuvemStatus: { leituraAtiva: false, autenticado: false, email: null, papel: null, sincronizando: false, ultimoErro: null },
   };
 
   // Menus que só aparecem depois de liberados com Ctrl+Shift+B e a senha.
   const ABAS_PROTEGIDAS = new Set(['relatorios', 'colunas', 'filtros', 'dados']);
-  const SENHA_MENU = '@t1v0ERP10';
 
   // Relatórios, Colunas e Filtros ficam juntos, dentro do grupo recolhível "Cadastros"; Pesquisar
   // e Configurações continuam soltos no topo/fim da lista.
@@ -175,6 +176,16 @@
     return { dados: r.dados };
   }
 
+  // Igual a chamar(), mas não mostra aviso sozinho no erro — quem chamou decide como mostrar
+  // (ex.: a tela de login mostra o erro dentro do próprio formulário, não como um toast solto).
+  async function chamarSemAviso(nome, ...args) {
+    try {
+      return await window.api[nome](...args);
+    } catch (erro) {
+      return { ok: false, erro: erro && erro.message ? erro.message : String(erro) };
+    }
+  }
+
   function atualizarBanco(db) {
     estado.db = db;
     estado.modulosSelecionados = new Set([...estado.modulosSelecionados].filter((m) => db.modulos.includes(m)));
@@ -185,7 +196,7 @@
 
   const pilhaModais = [];
 
-  function abrirModal({ titulo, corpo, acoes = [], larga = false, aoFechar }) {
+  function abrirModal({ titulo, corpo, acoes = [], larga = false, aoFechar, obrigatorio = false }) {
     const idTitulo = 'modal-' + Math.random().toString(36).slice(2, 8);
     const anterior = document.activeElement;
     let fechado = false;
@@ -202,7 +213,7 @@
       if (chamarAoFechar && aoFechar) aoFechar();
     }
 
-    const controle = { fechar, caixa };
+    const controle = { fechar, caixa, obrigatorio };
 
     const botoes = acoes.map((a) =>
       h(
@@ -245,7 +256,7 @@
     if (!topo) return;
     if (e.key === 'Escape') {
       e.preventDefault();
-      topo.fechar();
+      if (!topo.obrigatorio) topo.fechar(); // janela obrigatória só fecha pelo botão dela
     } else if (e.key === 'Tab') {
       const foco = [...topo.caixa.querySelectorAll('button:not(:disabled), input, select, textarea, [tabindex="0"]')].filter((x) => !x.hidden);
       if (!foco.length) return;
@@ -301,17 +312,60 @@
     });
   }
 
-  async function verImagem(rel) {
-    const r = await chamar('obterImagem', rel.id);
+  const ROTULO_IMAGEM = { relatorio: 'Imagem do relatório', filtro: 'Imagem do filtro' };
+
+  async function verImagem(rel, tipo) {
+    const r = await chamar('obterImagem', rel.id, tipo);
     if (!r) return;
     abrirModal({
-      titulo: rel.nome,
+      titulo: `${rel.nome} — ${ROTULO_IMAGEM[tipo].toLowerCase()}`,
       larga: true,
       corpo: r.dados
-        ? h('img', { class: 'previa', src: r.dados, alt: `Tela de filtro do relatório ${rel.nome}` })
+        ? h('img', { class: 'previa', src: r.dados, alt: `${ROTULO_IMAGEM[tipo]}: ${rel.nome}` })
         : h('p', {}, 'O arquivo da imagem não foi encontrado. Anexe a imagem de novo em Relatórios.'),
       acoes: [{ rotulo: 'Fechar', tipo: 'primario' }],
     });
+  }
+
+  // Ícones (SVG desenhado na hora, sem depender de fonte ou emoji): documento = relatório, funil = filtro.
+  function iconeSvg(tipo) {
+    const NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '12');
+    svg.setAttribute('height', '12');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.4');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    const caminhos = tipo === 'filtro' ? ['M2 3h12l-4.5 5.5V13l-3 1.5V8.5z'] : ['M4 2h5.5L13 5.5V14H4z', 'M9.5 2v3.5H13', 'M6 8.5h5M6 11h5'];
+    for (const d of caminhos) {
+      const c = document.createElementNS(NS, 'path');
+      c.setAttribute('d', d);
+      svg.append(c);
+    }
+    return svg;
+  }
+
+  // Botão-ícone redondo (igual ao "?") que abre uma das imagens do relatório.
+  function botaoIconeImagem(rel, tipo) {
+    const texto = `Ver ${ROTULO_IMAGEM[tipo].toLowerCase()}`;
+    return h(
+      'button',
+      {
+        type: 'button',
+        class: `rel-icone rel-icone-${tipo}`,
+        'aria-label': `${texto}: ${rel.nome}`,
+        onclick: () => { dica.esconder(); verImagem(rel, tipo); },
+        onmouseenter: (e) => dica.mostrar(e.currentTarget, texto),
+        onmouseleave: () => dica.esconder(),
+        onfocus: (e) => dica.mostrar(e.currentTarget, texto),
+        onblur: () => dica.esconder(),
+      },
+      iconeSvg(tipo)
+    );
   }
 
   // ---------- campo de escolha de colunas ----------
@@ -668,46 +722,71 @@
     nav.replaceChildren(...nos);
   }
 
-  // Pede a senha para mostrar Relatórios, Colunas, Filtros e Configurações.
-  function pedirSenha() {
+  // Pede e-mail e senha (a mesma conta cadastrada na nuvem) para mostrar Relatórios, Colunas,
+  // Filtros e Configurações. Só entrar já eleva a permissão de escrever; não precisa reconectar nada.
+  function pedirLogin() {
     return new Promise((resolver) => {
-      const campo = h('input', { type: 'password', id: 'campo-senha', autocomplete: 'off' });
-      const enviar = () => { resolver(campo.value); modal.fechar(false); };
-      campo.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          enviar();
+      const campoEmail = h('input', { type: 'email', id: 'campo-email', autocomplete: 'off' });
+      const campoSenha = h('input', { type: 'password', id: 'campo-senha', autocomplete: 'off' });
+      const erroEl = h('p', { class: 'ajuda erro-login', hidden: true });
+      const enviar = async () => {
+        erroEl.hidden = true;
+        botaoEntrar.disabled = true;
+        try {
+          const r = await chamarSemAviso('nuvemEntrar', campoEmail.value, campoSenha.value);
+          if (!r.ok) {
+            erroEl.textContent = r.erro;
+            erroEl.hidden = false;
+            botaoEntrar.disabled = false;
+            return;
+          }
+          resolver(r.dados);
+          modal.fechar(false);
+        } catch (_) {
+          erroEl.textContent = 'Não consegui falar com o servidor. Confira sua internet.';
+          erroEl.hidden = false;
+          botaoEntrar.disabled = false;
         }
-      });
+      };
+      [campoEmail, campoSenha].forEach((c) =>
+        c.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            enviar();
+          }
+        })
+      );
       const modal = abrirModal({
-        titulo: 'Liberar menus',
+        titulo: 'Entrar',
         corpo: [
-          h('div', {}, h('label', { class: 'rotulo', for: 'campo-senha' }, 'Senha'), campo),
-          h('p', { class: 'ajuda' }, 'Digite a senha para mostrar Relatórios, Colunas, Filtros e Configurações.'),
+          h('div', {}, h('label', { class: 'rotulo', for: 'campo-email' }, 'E-mail'), campoEmail),
+          h('div', {}, h('label', { class: 'rotulo', for: 'campo-senha' }, 'Senha'), campoSenha),
+          erroEl,
+          h('p', { class: 'ajuda' }, 'Entre com sua conta para mostrar Relatórios, Colunas, Filtros e Configurações.'),
         ],
         aoFechar: () => resolver(null),
         acoes: [
           { rotulo: 'Cancelar', aoClicar: () => resolver(null) },
-          { rotulo: 'Liberar', tipo: 'primario', aoClicar: () => { enviar(); return false; } },
+          { rotulo: 'Entrar', tipo: 'primario', chamarAoFechar: false, aoClicar: () => { enviar(); return false; } },
         ],
       });
+      const botaoEntrar = modal.caixa.querySelector('.modal-acoes .btn.primario');
     });
   }
 
-  // Ctrl+Shift+B: libera os menus escondidos (pede senha) ou esconde de novo (sem senha).
+  // Ctrl+Shift+B: libera os menus (pede login) ou esconde de novo (e encerra a sessão de escrita).
   async function alternarMenu() {
     if (pilhaModais.length) return;
     if (estado.menuOculto) {
-      const senha = await pedirSenha();
-      if (senha === null) return;
-      if (senha !== SENHA_MENU) {
-        aviso('Senha incorreta', 'erro');
-        return;
-      }
+      const sessao = await pedirLogin();
+      if (!sessao) return;
       estado.menuOculto = false;
+      estado.nuvemPapel = sessao.papel;
       aviso('Menus liberados');
     } else {
+      await chamarSemAviso('nuvemSair');
       estado.menuOculto = true;
+      estado.nuvemPapel = null;
       if (estado.aba !== 'pesquisar') estado.aba = 'pesquisar';
       aviso('Menus ocultados');
     }
@@ -734,6 +813,58 @@
     else if (estado.aba === 'colunas') renderColunas(alvo);
     else if (estado.aba === 'filtros') renderFiltros(alvo);
     else renderDados(alvo);
+  }
+
+  // Primeira vez que o programa abre neste computador: todos os módulos começam desmarcados e a
+  // pessoa marca os que usa. A escolha fica salva aqui e sobrevive às atualizações do programa.
+  function abrirEscolhaModulosIniciais() {
+    const caixas = new Map();
+    const lista = h(
+      'div',
+      { class: 'lista-checkbox' },
+      estado.db.modulos.map((m) => {
+        const id = 'escolha-modulo-' + m;
+        const input = h('input', { type: 'checkbox', id, onchange: atualizarBotao });
+        caixas.set(m, input);
+        return h('label', { class: 'checkbox-linha', for: id }, input, h('span', {}, m));
+      })
+    );
+    const marcados = () => [...caixas.entries()].filter(([, c]) => c.checked).map(([m]) => m);
+
+    const controle = abrirModal({
+      titulo: 'Escolha os módulos que você usa',
+      obrigatorio: true,
+      corpo: [
+        h('p', {}, 'Marque só os módulos do Ativo.ERP que você usa. A pesquisa vai mostrar apenas esses. Você pode mudar isso depois em Configurações.'),
+        h(
+          'div',
+          { class: 'barra' },
+          h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => { caixas.forEach((c) => { c.checked = true; }); atualizarBotao(); } }, 'Marcar todos'),
+          h('button', { type: 'button', class: 'btn pequeno discreto', onclick: () => { caixas.forEach((c) => { c.checked = false; }); atualizarBotao(); } }, 'Desmarcar todos')
+        ),
+        lista,
+      ],
+      acoes: [
+        {
+          rotulo: 'Continuar',
+          tipo: 'primario',
+          desabilitado: true,
+          aoClicar: async () => {
+            const escolhidos = new Set(marcados());
+            const ocultos = estado.db.modulos.filter((m) => !escolhidos.has(m));
+            const r = await chamar('definirModulosOcultos', ocultos);
+            if (!r) return false;
+            atualizarBanco(r.dados);
+            render();
+          },
+        },
+      ],
+    });
+    const botao = controle.caixa.querySelector('.modal-acoes .btn');
+    function atualizarBotao() {
+      botao.disabled = marcados().length === 0;
+    }
+    return controle;
   }
 
   // ---------- aba Pesquisar ----------
@@ -1026,27 +1157,30 @@
         { class: 'rel-topo' },
         h('span', { class: 'rel-nome' }, rel.nome),
         h('span', { class: 'rel-modulo' }, rel.modulo),
-        rel.imagem ? h('button', { type: 'button', class: 'btn discreto pequeno', onclick: () => verImagem(rel) }, 'Ver tela do filtro') : null,
         rel.filtros && rel.filtros.length ? h('button', { type: 'button', class: 'btn discreto pequeno', onclick: () => abrirFiltrosRelatorio(rel) }, 'Ver filtros') : null
       ),
       rel.colunas.length ? chipsDeColunas(rel, escolhidas) : h('p', { class: 'rel-sem-colunas' }, 'Sem colunas cadastradas.'),
-      rel.funcionalidade
+      rel.funcionalidade || rel.imagem || rel.imagemFiltro
         ? h(
             'div',
             { class: 'rel-rodape' },
-            h(
-              'span',
-              {
-                class: 'rel-ajuda',
-                tabindex: '0',
-                'aria-label': `Para que serve ${rel.nome}: ${rel.funcionalidade}`,
-                onmouseenter: (e) => dica.mostrar(e.currentTarget, rel.funcionalidade),
-                onmouseleave: () => dica.esconder(),
-                onfocus: (e) => dica.mostrar(e.currentTarget, rel.funcionalidade),
-                onblur: () => dica.esconder(),
-              },
-              '?'
-            )
+            rel.imagem ? botaoIconeImagem(rel, 'relatorio') : null,
+            rel.imagemFiltro ? botaoIconeImagem(rel, 'filtro') : null,
+            rel.funcionalidade
+              ? h(
+                  'span',
+                  {
+                    class: 'rel-ajuda',
+                    tabindex: '0',
+                    'aria-label': `Para que serve ${rel.nome}: ${rel.funcionalidade}`,
+                    onmouseenter: (e) => dica.mostrar(e.currentTarget, rel.funcionalidade),
+                    onmouseleave: () => dica.esconder(),
+                    onfocus: (e) => dica.mostrar(e.currentTarget, rel.funcionalidade),
+                    onblur: () => dica.esconder(),
+                  },
+                  '?'
+                )
+              : null
           )
         : null
     );
@@ -1179,7 +1313,7 @@
         h(
           'table',
           { class: 'tabela' },
-          h('thead', {}, h('tr', {}, h('th', {}, 'Relatório'), h('th', {}, 'Módulo'), h('th', { class: 'num' }, 'Colunas'), h('th', {}, 'Tela do filtro'))),
+          h('thead', {}, h('tr', {}, h('th', {}, 'Relatório'), h('th', {}, 'Módulo'), h('th', { class: 'num' }, 'Colunas'), h('th', {}, 'Imagens'))),
           h(
             'tbody',
             {},
@@ -1190,7 +1324,7 @@
                 h('td', {}, h('button', { type: 'button', class: 'link', onclick: (e) => { e.stopPropagation(); editarRelatorio(r); } }, r.nome)),
                 h('td', { class: 'mono' }, r.modulo),
                 h('td', { class: 'num' }, r.colunas.length),
-                h('td', {}, r.imagem ? h('span', { class: 'tag auto' }, 'Anexada') : '')
+                h('td', {}, r.imagem ? h('span', { class: 'tag auto' }, 'Relatório') : '', ' ', r.imagemFiltro ? h('span', { class: 'tag auto' }, 'Filtro') : '')
               )
             )
           )
@@ -1266,18 +1400,18 @@
 
     const editorFiltros = criarEditorFiltros(rel ? rel.filtros : []);
 
-    // Imagem da tela de filtro (só depois que o relatório existe).
-    let blocoImagem = null;
-    if (!novo) {
+    // As duas imagens (do relatório e do filtro) — só depois que o relatório existe.
+    function criarBlocoImagem(tipo) {
+      const campo = tipo === 'filtro' ? 'imagemFiltro' : 'imagem';
       const area = h('div', { class: 'imagem-campo' });
       const desenharImagem = async () => {
         const atual = estado.db.relatorios.find((r) => r.id === rel.id);
         area.replaceChildren();
-        if (atual && atual.imagem) {
-          const r = await chamar('obterImagem', rel.id);
-          if (r && r.dados) area.append(h('img', { class: 'previa', src: r.dados, alt: 'Tela de filtro anexada' }));
+        if (atual && atual[campo]) {
+          const r = await chamar('obterImagem', rel.id, tipo);
+          if (r && r.dados) area.append(h('img', { class: 'previa', src: r.dados, alt: `${ROTULO_IMAGEM[tipo]} anexada` }));
           else area.append(h('p', { class: 'ajuda' }, 'A imagem anexada não foi encontrada no disco. Anexe de novo.'));
-        } else if (atual && atual.imagemOriginal) {
+        } else if (tipo === 'filtro' && atual && atual.imagemOriginal) {
           area.append(h('p', { class: 'ajuda' }, `Na planilha original este relatório apontava para “${atual.imagemOriginal}”.`));
         }
         area.append(
@@ -1288,16 +1422,16 @@
               type: 'button',
               class: 'btn pequeno',
               onclick: async () => {
-                const r = await chamar('anexarImagem', rel.id);
+                const r = await chamar('anexarImagem', rel.id, tipo);
                 if (r && r.dados) { atualizarBanco(r.dados); aviso('Imagem anexada'); desenharImagem(); }
               },
-            }, atual && atual.imagem ? 'Trocar imagem' : 'Anexar imagem'),
-            atual && atual.imagem
+            }, atual && atual[campo] ? 'Trocar imagem' : 'Anexar imagem'),
+            atual && atual[campo]
               ? h('button', {
                   type: 'button',
                   class: 'btn pequeno perigo',
                   onclick: async () => {
-                    const r = await chamar('removerImagem', rel.id);
+                    const r = await chamar('removerImagem', rel.id, tipo);
                     if (r) { atualizarBanco(r.dados); aviso('Imagem removida'); desenharImagem(); }
                   },
                 }, 'Remover imagem')
@@ -1305,8 +1439,19 @@
           )
         );
       };
-      blocoImagem = h('div', {}, h('span', { class: 'rotulo' }, 'Tela do filtro (imagem)'), area, h('p', { class: 'ajuda' }, 'A imagem é salva assim que você escolhe o arquivo.'));
       desenharImagem();
+      return h('div', { class: `bloco-imagem bloco-imagem-${tipo}` }, h('span', { class: 'rotulo' }, ROTULO_IMAGEM[tipo]), area);
+    }
+
+    let blocoImagem = null;
+    if (!novo) {
+      blocoImagem = h(
+        'div',
+        {},
+        criarBlocoImagem('relatorio'),
+        criarBlocoImagem('filtro'),
+        h('p', { class: 'ajuda' }, 'As imagens são salvas assim que você escolhe o arquivo. Nos resultados da pesquisa aparecem dois ícones, um para cada imagem.')
+      );
     }
 
     abrirModal({
@@ -1841,6 +1986,162 @@
     });
   }
 
+  // Resumo do status da nuvem (usado dentro de Configurações).
+  function desenharStatusNuvem() {
+    const s = estado.nuvemStatus;
+    if (!s.leituraAtiva && !s.ultimoErro) return h('p', { class: 'ajuda' }, 'Este programa não tem a nuvem configurada — funcionando só com os dados deste computador.');
+    const partes = [];
+    partes.push(s.leituraAtiva ? h('span', { class: 'tag auto' }, 'Sincronizado') : h('span', { class: 'tag perigo' }, 'Sem conexão'));
+    if (s.sincronizando) partes.push(h('span', { class: 'tag' }, 'Enviando…'));
+    if (s.autenticado) partes.push(h('span', {}, `Logado como ${s.email} (${s.papel === 'admin' ? 'administrador' : 'editor'})`));
+    const linha = h('div', { class: 'barra' }, ...partes);
+    return s.ultimoErro ? h('div', {}, linha, h('p', { class: 'ajuda erro-login' }, s.ultimoErro)) : linha;
+  }
+
+  function abrirAlterarMinhaSenha() {
+    const campo1 = h('input', { type: 'password', id: 'nova-minha-senha', autocomplete: 'new-password' });
+    const campo2 = h('input', { type: 'password', id: 'confirma-minha-senha', autocomplete: 'new-password' });
+    abrirModal({
+      titulo: 'Alterar minha senha',
+      corpo: [
+        h('div', {}, h('label', { class: 'rotulo', for: 'nova-minha-senha' }, 'Nova senha (mínimo 6 caracteres)'), campo1),
+        h('div', {}, h('label', { class: 'rotulo', for: 'confirma-minha-senha' }, 'Confirme a nova senha'), campo2),
+      ],
+      acoes: [
+        { rotulo: 'Cancelar' },
+        {
+          rotulo: 'Salvar',
+          tipo: 'primario',
+          aoClicar: async () => {
+            if (campo1.value.length < 6) { aviso('A senha precisa ter pelo menos 6 caracteres.', 'erro'); return false; }
+            if (campo1.value !== campo2.value) { aviso('As senhas digitadas são diferentes.', 'erro'); return false; }
+            const r = await chamar('nuvemRedefinirMinhaSenha', campo1.value);
+            if (!r) return false;
+            aviso('Senha alterada.');
+          },
+        },
+      ],
+    });
+  }
+
+  // ---------- painel de usuários (só quando estado.nuvemPapel === 'admin') ----------
+
+  function renderPainelUsuarios() {
+    const corpo = h('div', {}, h('p', { class: 'ajuda' }, 'Carregando…'));
+    const painel = h('section', { class: 'painel' }, h('h2', {}, 'Usuários'), h('p', { class: 'ajuda' }, 'Quem pode entrar (Ctrl+Shift+B) e editar. "Administrador" também gerencia outros usuários.'), corpo);
+
+    async function carregar() {
+      const r = await chamar('nuvemListarUsuarios');
+      if (!r) return;
+      desenhar(r.dados);
+    }
+
+    function desenhar(usuarios) {
+      corpo.replaceChildren(
+        h(
+          'table',
+          { class: 'tabela' },
+          h('thead', {}, h('tr', {}, h('th', {}, 'E-mail'), h('th', {}, 'Papel'), h('th', {}, ''))),
+          h(
+            'tbody',
+            {},
+            usuarios.map((u) =>
+              h(
+                'tr',
+                {},
+                h('td', {}, u.email),
+                h('td', {}, u.papel === 'admin' ? 'Administrador' : 'Editor'),
+                h(
+                  'td',
+                  { class: 'acoes' },
+                  h('button', {
+                    type: 'button',
+                    class: 'btn pequeno discreto',
+                    onclick: async () => {
+                      const novoPapel = u.papel === 'admin' ? 'editor' : 'admin';
+                      const ok = await confirmar({ titulo: 'Trocar papel', mensagem: `Tornar ${u.email} ${novoPapel === 'admin' ? 'administrador' : 'editor'}?`, rotulo: 'Trocar' });
+                      if (!ok) return;
+                      const r = await chamar('nuvemDefinirPapel', u.email, novoPapel);
+                      if (r) { aviso('Papel alterado.'); carregar(); }
+                    },
+                  }, u.papel === 'admin' ? 'Tornar editor' : 'Tornar admin'),
+                  h('button', {
+                    type: 'button',
+                    class: 'btn pequeno discreto',
+                    onclick: () => abrirRedefinirSenhaUsuario(u.email),
+                  }, 'Redefinir senha'),
+                  h('button', {
+                    type: 'button',
+                    class: 'btn pequeno discreto perigo',
+                    onclick: async () => {
+                      const ok = await confirmar({ titulo: 'Excluir usuário', mensagem: `Excluir o acesso de ${u.email}?`, rotulo: 'Excluir', perigo: true });
+                      if (!ok) return;
+                      const r = await chamar('nuvemExcluirUsuario', u.email);
+                      if (r) { aviso('Usuário excluído.'); carregar(); }
+                    },
+                  }, 'Excluir')
+                )
+              )
+            )
+          )
+        ),
+        h('button', { type: 'button', class: 'btn', onclick: () => abrirNovoUsuario() }, 'Novo usuário')
+      );
+    }
+
+    function abrirRedefinirSenhaUsuario(email) {
+      const campo = h('input', { type: 'password', id: 'redefinir-senha-usuario', autocomplete: 'new-password' });
+      abrirModal({
+        titulo: `Redefinir senha de ${email}`,
+        corpo: [h('div', {}, h('label', { class: 'rotulo', for: 'redefinir-senha-usuario' }, 'Nova senha (mínimo 6 caracteres)'), campo)],
+        acoes: [
+          { rotulo: 'Cancelar' },
+          {
+            rotulo: 'Salvar',
+            tipo: 'primario',
+            aoClicar: async () => {
+              if (campo.value.length < 6) { aviso('A senha precisa ter pelo menos 6 caracteres.', 'erro'); return false; }
+              const r = await chamar('nuvemRedefinirSenhaUsuario', email, campo.value);
+              if (!r) return false;
+              aviso('Senha redefinida.');
+            },
+          },
+        ],
+      });
+    }
+
+    function abrirNovoUsuario() {
+      const campoEmail = h('input', { type: 'email', id: 'novo-usuario-email', autocomplete: 'off' });
+      const campoSenha = h('input', { type: 'password', id: 'novo-usuario-senha', autocomplete: 'new-password' });
+      const campoPapel = h('select', { id: 'novo-usuario-papel' }, h('option', { value: 'editor' }, 'Editor'), h('option', { value: 'admin' }, 'Administrador'));
+      abrirModal({
+        titulo: 'Novo usuário',
+        corpo: [
+          h('div', {}, h('label', { class: 'rotulo', for: 'novo-usuario-email' }, 'E-mail'), campoEmail),
+          h('div', {}, h('label', { class: 'rotulo', for: 'novo-usuario-senha' }, 'Senha (mínimo 6 caracteres)'), campoSenha),
+          h('div', {}, h('label', { class: 'rotulo', for: 'novo-usuario-papel' }, 'Papel'), campoPapel),
+        ],
+        acoes: [
+          { rotulo: 'Cancelar' },
+          {
+            rotulo: 'Criar',
+            tipo: 'primario',
+            aoClicar: async () => {
+              if (campoSenha.value.length < 6) { aviso('A senha precisa ter pelo menos 6 caracteres.', 'erro'); return false; }
+              const r = await chamar('nuvemCriarUsuario', campoEmail.value, campoSenha.value, campoPapel.value);
+              if (!r) return false;
+              aviso('Usuário criado.');
+              carregar();
+            },
+          },
+        ],
+      });
+    }
+
+    carregar();
+    return painel;
+  }
+
   function renderDados(alvo) {
     const colunas = new Set();
     estado.db.relatorios.forEach((r) => r.colunas.forEach((c) => colunas.add(c)));
@@ -2023,6 +2324,47 @@
           h(
             'section',
             { class: 'painel' },
+            h('h2', {}, 'Sincronização'),
+            h('p', { class: 'ajuda' }, 'A pesquisa já é compartilhada em tempo real entre os computadores, sem precisar entrar. Entrar (Ctrl+Shift+B) é só pra poder editar.'),
+            desenharStatusNuvem(),
+            estado.nuvemPapel
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: 'btn',
+                    onclick: async (e) => {
+                      const botao = e.currentTarget;
+                      const ok = await confirmar({
+                        titulo: 'Enviar dados desta máquina',
+                        mensagem: 'Isso faz a nuvem ficar igual aos dados deste computador — o que só existir na nuvem e não existir aqui é apagado de lá. Use isso pra migrar os dados a primeira vez, ou se este computador é quem manda.',
+                        rotulo: 'Enviar',
+                        perigo: true,
+                      });
+                      if (!ok) return;
+                      botao.disabled = true;
+                      const r = await chamar('nuvemEnviarTudo');
+                      botao.disabled = false;
+                      if (r) aviso(r.dados.alterados ? 'Dados enviados para a nuvem.' : 'A nuvem já estava igual a este computador.');
+                    },
+                  },
+                  'Enviar dados desta máquina para a nuvem'
+                )
+              : null
+          ),
+          estado.nuvemPapel === 'admin' ? renderPainelUsuarios() : null,
+          estado.nuvemPapel
+            ? h(
+                'section',
+                { class: 'painel' },
+                h('h2', {}, 'Minha conta'),
+                h('p', { class: 'ajuda' }, `Você está logado como ${estado.nuvemStatus.email}.`),
+                h('button', { type: 'button', class: 'btn', onclick: () => abrirAlterarMinhaSenha() }, 'Alterar minha senha')
+              )
+            : null,
+          h(
+            'section',
+            { class: 'painel' },
             h('h2', {}, 'Atualizações'),
             h('p', { class: 'ajuda' }, `Versão instalada: ${estado.info.versao}. O programa confere sozinho por uma versão nova ao abrir; use o botão abaixo para checar na hora.`),
             h(
@@ -2097,8 +2439,28 @@
     montarAbas();
     render();
     esconderPreloader();
+    if (estado.db.modulosEscolhidos === false) abrirEscolhaModulosIniciais();
     if (estado.info.avisoInicial) aviso(estado.info.avisoInicial, 'erro', 20000);
     if (typeof window.api.aoAtualizar === 'function') window.api.aoAtualizar(tratarEventoAtualizacao);
+    if (typeof window.api.aoDadosNuvem === 'function') {
+      window.api.aoDadosNuvem((dados) => {
+        // Chega em tempo real quando alguém (nesta máquina ou em outra) muda algo. Se tiver um modal
+        // aberto, não atropela o que a pessoa está digitando — atualiza os dados por baixo e aplica
+        // a tela assim que ela fechar o modal.
+        atualizarBanco(dados.db);
+        if (!pilhaModais.length) render();
+      });
+    }
+    if (typeof window.api.aoStatusNuvem === 'function') {
+      window.api.aoStatusNuvem((status) => {
+        // Só guarda — NÃO redesenha a tela sozinho aqui. Redesenhar chamaria de novo as ações da
+        // aba Configurações (lista de usuários, backups...), que se falharem emitem status de novo,
+        // e isso reabriria o mesmo ciclo. A tela pega o status atualizado na próxima vez que redesenhar
+        // por conta própria (trocar de aba, fazer alguma ação etc.).
+        estado.nuvemStatus = status;
+      });
+    }
+    chamarSemAviso('nuvemStatus').then((r) => { if (r.ok) estado.nuvemStatus = r.dados; });
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);

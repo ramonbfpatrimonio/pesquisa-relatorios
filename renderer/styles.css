@@ -302,7 +302,8 @@ button.chip:hover { border-color: var(--acento); color: var(--acento); backgroun
   cursor: pointer;
 }
 .rel-mais:hover { background: var(--acento-suave); }
-.rel-rodape { display: flex; justify-content: flex-end; margin-top: 10px; }
+.rel-rodape { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 10px; }
+.bloco-imagem { margin-bottom: 14px; }
 .rel-ajuda {
   display: inline-flex;
   align-items: center;
@@ -319,6 +320,21 @@ button.chip:hover { border-color: var(--acento); color: var(--acento); backgroun
   flex: 0 0 auto;
 }
 .rel-ajuda:hover, .rel-ajuda:focus-visible { background: var(--acento-suave); }
+.rel-icone {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--acento);
+  background: var(--superficie);
+  color: var(--acento-forte);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.rel-icone:hover, .rel-icone:focus-visible { background: var(--acento-suave); }
 
 /* ---------- caixa de dica personalizada (funcionalidade do relatório) ---------- */
 .dica-flutuante {
@@ -417,6 +433,7 @@ table.tabela { width: 100%; border-collapse: collapse; background: var(--superfi
 .tag { display: inline-block; padding: 0 7px; border-radius: 4px; background: var(--superficie-2); border: 1px solid var(--linha); font-size: 12px; color: var(--tinta-suave); }
 .tag.auto { background: var(--acento-suave); border-color: transparent; color: var(--acento); }
 .tag.perigo { background: var(--perigo-suave); border-color: transparent; color: var(--perigo); }
+.erro-login { color: var(--perigo); }
 
 .exemplo-csv {
   background: var(--superficie-2);

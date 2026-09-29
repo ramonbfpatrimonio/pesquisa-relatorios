@@ -144,33 +144,63 @@ test('sem backup válido, corrompido volta para a lista original', () => {
   assert.match(de.avisoInicial, /lista original/);
 });
 
-test('imagens: anexar, ler, trocar de formato, espelhar no backup, remover e restaurar do espelho', () => {
+test('imagens: cada relatório tem a do relatório e a do filtro, independentes; trocar, espelhar no backup, remover e restaurar', () => {
   const { raiz, store } = novoStore();
   const id = store.db.relatorios[0].id;
-  store.anexarImagem(id, imagemFalsa(raiz, 'a.gif'));
   const rel = () => store.db.relatorios.find((r) => r.id === id);
-  assert.equal(rel().imagem, `${id}.gif`);
-  assert.match(store.obterImagem(id), /^data:image\/gif;base64,/);
 
-  store.anexarImagem(id, imagemFalsa(raiz, 'b.png'));
-  assert.equal(rel().imagem, `${id}.png`);
-  assert.ok(!fs.existsSync(path.join(store.pastaImagens, `${id}.gif`)));
+  store.anexarImagem(id, imagemFalsa(raiz, 'a.gif')); // sem tipo = imagem do relatório
+  assert.match(rel().imagem, new RegExp(`^${id}-r-.*\\.gif$`));
+  assert.equal(rel().imagemFiltro, null, 'a do filtro não é afetada');
+  assert.match(store.obterImagem(id), /^data:image\/gif;base64,/);
+  assert.equal(store.obterImagem(id, 'filtro'), null);
+
+  store.anexarImagem(id, imagemFalsa(raiz, 'f.png'), 'filtro');
+  assert.match(rel().imagemFiltro, new RegExp(`^${id}-f-.*\\.png$`));
+  assert.match(store.obterImagem(id, 'filtro'), /^data:image\/png;base64,/);
+  assert.match(rel().imagem, /\.gif$/, 'a do relatório continua a mesma');
+
+  // trocar de formato apaga o arquivo antigo, só daquele tipo
+  const antigo = rel().imagem;
+  store.anexarImagem(id, imagemFalsa(raiz, 'b.png'), 'relatorio');
+  assert.notEqual(rel().imagem, antigo);
+  assert.ok(!fs.existsSync(path.join(store.pastaImagens, antigo)));
+  assert.ok(fs.existsSync(path.join(store.pastaImagens, rel().imagemFiltro)));
 
   const nomeBackup = store.criarBackup('manual');
-  assert.ok(fs.existsSync(path.join(store.pastaBackup, 'imagens', `${id}.png`)));
+  assert.ok(fs.existsSync(path.join(store.pastaBackup, 'imagens', rel().imagem)));
+  assert.ok(fs.existsSync(path.join(store.pastaBackup, 'imagens', rel().imagemFiltro)));
 
-  fs.unlinkSync(path.join(store.pastaImagens, `${id}.png`));
+  fs.unlinkSync(path.join(store.pastaImagens, rel().imagem));
+  fs.unlinkSync(path.join(store.pastaImagens, rel().imagemFiltro));
   assert.equal(store.obterImagem(id), null);
+  assert.equal(store.obterImagem(id, 'filtro'), null);
   store.restaurarBackup(nomeBackup);
   assert.match(store.obterImagem(id), /^data:image\/png/);
+  assert.match(store.obterImagem(id, 'filtro'), /^data:image\/png/);
 
   assert.throws(() => store.anexarImagem(id, path.join(raiz, 'x.exe')), /Formato/);
+  assert.throws(() => store.anexarImagem(id, imagemFalsa(raiz, 'c.png'), 'outro'), /Tipo de imagem/);
+  store.removerImagem(id, 'filtro');
+  assert.equal(rel().imagemFiltro, null);
+  assert.ok(rel().imagem, 'remover a do filtro não mexe na do relatório');
   store.removerImagem(id);
   assert.equal(rel().imagem, null);
-  assert.equal(store.obterImagem(id), null);
 });
 
-test('importarImagensDePasta liga os arquivos pelo nome que a planilha apontava', () => {
+test('excluir um relatório apaga os arquivos das duas imagens', () => {
+  const { raiz, store } = novoStore();
+  store.salvarRelatorio({ nome: 'Com Duas Imagens', modulo: 'ATIVO_ECD', colunas: ['A'] });
+  const rel = store.db.relatorios.find((r) => r.nome === 'Com Duas Imagens');
+  store.anexarImagem(rel.id, imagemFalsa(raiz, 'a.gif'));
+  store.anexarImagem(rel.id, imagemFalsa(raiz, 'b.gif'), 'filtro');
+  const [a1, a2] = [rel.imagem, rel.imagemFiltro];
+  store.excluirRelatorio(rel.id);
+  assert.ok(!fs.existsSync(path.join(store.pastaImagens, a1)));
+  assert.ok(!fs.existsSync(path.join(store.pastaImagens, a2)));
+});
+
+test('importarImagensDePasta liga os arquivos pelo nome que a planilha apontava, como imagem do FILTRO', () => {
   const { raiz, store } = novoStore();
   const pasta = path.join(raiz, 'IMAGENS');
   fs.mkdirSync(pasta);
@@ -180,7 +210,9 @@ test('importarImagensDePasta liga os arquivos pelo nome que a planilha apontava'
   fs.writeFileSync(path.join(pasta, alvo.imagemOriginal.toUpperCase().replace(/\.GIF$/, ' .gif')), 'GIF89a');
   const r = store.importarImagensDePasta(pasta);
   assert.equal(r.associadas, 1);
-  assert.ok(store.db.relatorios.find((x) => x.id === alvo.id).imagem);
+  const depois = store.db.relatorios.find((x) => x.id === alvo.id);
+  assert.ok(depois.imagemFiltro, 'vira imagem do filtro');
+  assert.equal(depois.imagem, null, 'a imagem do relatório não é tocada');
 });
 
 test('exportar e importar dados; arquivo inválido é recusado sem alterar nada', () => {
@@ -267,15 +299,29 @@ test('importarRelatoriosEmLote ignora linha inválida (sem quebrar as outras) e 
   assert.throws(() => store.importarRelatoriosEmLote([]), /nada para importar/);
 });
 
-test('modulosOcultos começa vazio, só aceita módulos que existem, e sobrevive a reabrir o programa', () => {
+test('primeira instalação: todos os módulos começam desmarcados e a escolha fica salva; instalação antiga não é afetada', () => {
   const { store } = novoStore();
-  assert.deepEqual(store.db.modulosOcultos, []);
+  assert.deepEqual([...store.db.modulosOcultos].sort(), [...store.db.modulos].sort(), 'tudo desmarcado');
+  assert.equal(store.db.modulosEscolhidos, false);
 
   store.definirModulosOcultos(['ATIVO_LOG', 'ATIVO_LOG', 'NAO_EXISTE', 'ATIVO_WMS']);
   assert.deepEqual(store.db.modulosOcultos.sort(), ['ATIVO_LOG', 'ATIVO_WMS']); // dedupe e ignora módulo inexistente
+  assert.equal(store.db.modulosEscolhidos, true);
 
   const reaberto = new Store({ pastaDados: store.pastaDados, pastaBackup: store.pastaBackup, seedPath: path.join(__dirname, '..', 'data', 'seed.json') }).iniciar();
   assert.deepEqual(reaberto.db.modulosOcultos.sort(), ['ATIVO_LOG', 'ATIVO_WMS']);
+  assert.equal(reaberto.db.modulosEscolhidos, true);
+});
+
+test('quem já tinha o programa (arquivo de dados sem o campo novo) mantém as marcações e não vê a escolha inicial', () => {
+  const { store } = novoStore();
+  fs.writeFileSync(
+    path.join(store.pastaDados, 'relatorios.json'),
+    JSON.stringify({ versao: 1, modulos: ['A', 'B'], relatorios: [], ignorados: [], modulosOcultos: ['B'] })
+  );
+  const reaberto = new Store({ pastaDados: store.pastaDados, pastaBackup: store.pastaBackup, seedPath: path.join(__dirname, '..', 'data', 'seed.json') }).iniciar();
+  assert.equal(reaberto.db.modulosEscolhidos, true);
+  assert.deepEqual(reaberto.db.modulosOcultos, ['B']);
 });
 
 test('excluirModulo tira o módulo excluído da lista de ocultos também', () => {

@@ -24,7 +24,7 @@ const MODELO_CSV_RELATORIOS =
   'ATIVO_LOG;Vendas por Vendedor;Mostra o total vendido por cada vendedor no período.;"VENDEDOR;VALOR;DATA;CLIENTE";"Vendedor:texto;Periodo:periodo"\r\n' +
   'ATIVO_ADM;Cheques Pendentes;;"CHEQUE;BANCO;VENCIMENTO";"Cliente:texto;Emissao:periodo;Situacao:lista:Aberto,Compensado,Devolvido,Descontado,Garantia,Resgatado"\r\n';
 
-function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, verificarAtualizacoes, baixarAtualizacao, instalarAtualizacao }) {
+function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, verificarAtualizacoes, baixarAtualizacao, instalarAtualizacao, nuvem }) {
   // Texto de "o que mudou" dessa versão, editado à mão em data/novidades.txt antes de publicar.
   // Cada build carrega o texto que estava lá naquele momento — versões antigas instaladas mantêm o texto delas.
   function lerNovidades() {
@@ -55,15 +55,51 @@ function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, 
     criarFiltro: (dados) => store.criarFiltro(dados),
     ignorarSimilar: (chave) => store.ignorarSimilar(chave),
 
-    obterImagem: (id) => store.obterImagem(id),
-    removerImagem: (id) => store.removerImagem(id),
-    anexarImagem: async (id) => {
+    // Se a imagem ainda não existe neste computador (outra máquina anexou), baixa da nuvem na hora.
+    obterImagem: async (id, tipo) => {
+      const rel = store.db.relatorios.find((r) => r.id === id);
+      const nomeArquivo = rel && (tipo === 'filtro' ? rel.imagemFiltro : rel.imagem);
+      if (nomeArquivo && nuvem.leituraAtiva) {
+        const caminho = path.join(store.pastaImagens, nomeArquivo);
+        if (!fs.existsSync(caminho)) {
+          try {
+            await nuvem.baixarImagem(nomeArquivo, caminho);
+          } catch (_) {
+            /* sem internet ou arquivo ainda não subiu: mostra "não encontrada", tenta de novo na próxima */
+          }
+        }
+      }
+      return store.obterImagem(id, tipo);
+    },
+    removerImagem: (id, tipo) => {
+      const rel = store.db.relatorios.find((r) => r.id === id);
+      const nomeArquivo = rel && (tipo === 'filtro' ? rel.imagemFiltro : rel.imagem);
+      const db = store.removerImagem(id, tipo);
+      if (nomeArquivo && nuvem.podeEscrever()) nuvem.apagarImagem(nomeArquivo).catch(() => {});
+      return db;
+    },
+    anexarImagem: async (id, tipo) => {
       const arquivo = await dialogo.abrirImagem();
-      return arquivo ? store.anexarImagem(id, arquivo) : null;
+      if (!arquivo) return null;
+      const db = store.anexarImagem(id, arquivo, tipo);
+      const rel = db.relatorios.find((r) => r.id === id);
+      const nomeArquivo = tipo === 'filtro' ? rel.imagemFiltro : rel.imagem;
+      if (nuvem.podeEscrever()) nuvem.subirImagem(path.join(store.pastaImagens, nomeArquivo), nomeArquivo).catch(() => {});
+      return db;
     },
     importarImagensDePasta: async () => {
       const pasta = await dialogo.abrirPastaImagens();
-      return pasta ? store.importarImagensDePasta(pasta) : null;
+      if (!pasta) return null;
+      const antes = new Set(store.db.relatorios.filter((r) => r.imagemFiltro).map((r) => r.id));
+      const r = store.importarImagensDePasta(pasta);
+      if (nuvem.podeEscrever()) {
+        for (const rel of r.db.relatorios) {
+          if (rel.imagemFiltro && !antes.has(rel.id)) {
+            nuvem.subirImagem(path.join(store.pastaImagens, rel.imagemFiltro), rel.imagemFiltro).catch(() => {});
+          }
+        }
+      }
+      return r;
     },
 
     listarBackups: () => store.listarBackups(),
@@ -113,6 +149,18 @@ function criarHandlers({ store, dialogo, abrirPasta, salvarPastaBackup, versao, 
     verificarAtualizacoes: () => verificarAtualizacoes(),
     baixarAtualizacao: () => baixarAtualizacao(),
     instalarAtualizacao: () => instalarAtualizacao(),
+
+    // ---------- nuvem ----------
+    nuvemStatus: () => nuvem.status(),
+    nuvemEntrar: (email, senha) => nuvem.entrar(email, senha),
+    nuvemSair: () => nuvem.sair(),
+    nuvemEnviarTudo: () => nuvem.enviarTudo(store.db),
+    nuvemListarUsuarios: () => nuvem.listarUsuarios(),
+    nuvemCriarUsuario: (email, senha, papel) => nuvem.criarUsuario(email, senha, papel),
+    nuvemRedefinirSenhaUsuario: (email, senha) => nuvem.redefinirSenhaDeUsuario(email, senha),
+    nuvemDefinirPapel: (email, papel) => nuvem.definirPapelDeUsuario(email, papel),
+    nuvemExcluirUsuario: (email) => nuvem.excluirUsuario(email),
+    nuvemRedefinirMinhaSenha: (senha) => nuvem.redefinirMinhaSenha(senha),
   };
 
   const envolvidos = {};

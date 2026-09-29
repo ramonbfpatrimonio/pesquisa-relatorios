@@ -7,6 +7,28 @@ const path = require('path');
 const { Store } = require('../src/store');
 const { criarHandlers } = require('../src/handlers');
 
+function nuvemFalsaPadrao() {
+  return {
+    leituraAtiva: false,
+    podeEscrever: () => false,
+    status: () => ({ leituraAtiva: false, autenticado: false, email: null, papel: null, sincronizando: false, ultimoErro: null }),
+    entrar: async () => ({ email: null, papel: null }),
+    sair: async () => {},
+    enviarTudo: async () => ({ alterados: false }),
+    subirImagem: async () => {},
+    baixarImagem: async () => {
+      throw new Error('sem nuvem');
+    },
+    apagarImagem: async () => {},
+    listarUsuarios: async () => [],
+    criarUsuario: async () => ({ ok: true }),
+    redefinirSenhaDeUsuario: async () => ({ ok: true }),
+    definirPapelDeUsuario: async () => ({ ok: true }),
+    excluirUsuario: async () => ({ ok: true }),
+    redefinirMinhaSenha: async () => ({ ok: true }),
+  };
+}
+
 function montar(dialogo = {}, extra = {}) {
   const raiz = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-h-'));
   const store = new Store({ pastaDados: path.join(raiz, 'dados'), pastaBackup: path.join(raiz, 'Backup'), seedPath: path.join(__dirname, '..', 'data', 'seed.json') }).iniciar();
@@ -21,6 +43,7 @@ function montar(dialogo = {}, extra = {}) {
     verificarAtualizacoes: async () => ({ emDesenvolvimento: true }),
     baixarAtualizacao: async () => 'baixando',
     instalarAtualizacao: () => 'instalando',
+    nuvem: nuvemFalsaPadrao(),
     ...extra,
   });
   return { raiz, store, handlers, abertas, pasta: () => pastaSalva };
@@ -172,4 +195,74 @@ test('criarColuna e criarFiltro repassam para o store', async () => {
   const r2 = await handlers.criarFiltro({ nome: 'Filtro Novo', tipo: 'texto' });
   assert.equal(r2.ok, true);
   assert.ok(store.db.filtrosCadastrados.some((f) => f.nome === 'Filtro Novo'));
+});
+
+test('ações de nuvem repassam pro objeto nuvem', async () => {
+  const chamadas = [];
+  const nuvem = {
+    ...nuvemFalsaPadrao(),
+    status: () => ({ leituraAtiva: true, autenticado: true, email: 'x@x.com', papel: 'admin', sincronizando: false, ultimoErro: null }),
+    entrar: async (email, senha) => { chamadas.push(['entrar', email, senha]); return { email, papel: 'admin' }; },
+    sair: async () => chamadas.push(['sair']),
+    enviarTudo: async () => { chamadas.push(['enviarTudo']); return { alterados: true }; },
+    criarUsuario: async (email, senha, papel) => { chamadas.push(['criarUsuario', email, senha, papel]); return { ok: true }; },
+    redefinirSenhaUsuario: undefined,
+  };
+  const { handlers } = montar({}, { nuvem });
+  assert.equal((await handlers.nuvemStatus()).dados.papel, 'admin');
+  await handlers.nuvemEntrar('a@a.com', 'senha123');
+  await handlers.nuvemSair();
+  await handlers.nuvemEnviarTudo();
+  await handlers.nuvemCriarUsuario('novo@x.com', 'senha123', 'editor');
+  assert.deepEqual(chamadas, [
+    ['entrar', 'a@a.com', 'senha123'],
+    ['sair'],
+    ['enviarTudo'],
+    ['criarUsuario', 'novo@x.com', 'senha123', 'editor'],
+  ]);
+});
+
+test('anexarImagem sobe pra nuvem só quando podeEscrever(); removerImagem apaga de lá', async () => {
+  const subidas = [];
+  const apagadas = [];
+  const nuvem = { ...nuvemFalsaPadrao(), podeEscrever: () => true, subirImagem: async (caminho, nome) => subidas.push(nome), apagarImagem: async (nome) => apagadas.push(nome) };
+  const raiz0 = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-img-nuvem-'));
+  const arquivo = path.join(raiz0, 'a.gif');
+  fs.writeFileSync(arquivo, 'GIF89a');
+  const { handlers, store } = montar({ abrirImagem: async () => arquivo }, { nuvem });
+  const id = store.db.relatorios[0].id;
+  await handlers.anexarImagem(id, 'relatorio');
+  assert.equal(subidas.length, 1);
+  await handlers.removerImagem(id, 'relatorio');
+  assert.deepEqual(apagadas, subidas);
+});
+
+test('anexarImagem NÃO sobe pra nuvem quando não pode escrever (leitura livre, sem sessão)', async () => {
+  const subidas = [];
+  const nuvem = { ...nuvemFalsaPadrao(), podeEscrever: () => false, subirImagem: async (_c, nome) => subidas.push(nome) };
+  const raiz0 = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-img-nuvem2-'));
+  const arquivo = path.join(raiz0, 'a.gif');
+  fs.writeFileSync(arquivo, 'GIF89a');
+  const { handlers, store } = montar({ abrirImagem: async () => arquivo }, { nuvem });
+  await handlers.anexarImagem(store.db.relatorios[0].id, 'relatorio');
+  assert.equal(subidas.length, 0);
+});
+
+test('obterImagem baixa da nuvem quando o arquivo não existe localmente ainda', async () => {
+  const baixadas = [];
+  const nuvem = {
+    ...nuvemFalsaPadrao(),
+    leituraAtiva: true,
+    baixarImagem: async (nome, destino) => {
+      baixadas.push(nome);
+      fs.writeFileSync(destino, Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'));
+    },
+  };
+  const { handlers, store } = montar({}, { nuvem });
+  const rel = store.db.relatorios[0];
+  // simula: outra máquina já anexou, mas o arquivo nunca chegou neste computador
+  rel.imagem = `${rel.id}-r-remota.gif`;
+  const r = await handlers.obterImagem(rel.id, 'relatorio');
+  assert.deepEqual(baixadas, [rel.imagem]);
+  assert.match(r.dados, /^data:image\/gif;base64,/);
 });

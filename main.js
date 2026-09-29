@@ -3,7 +3,10 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme } = requir
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
+const { createClient } = require('@supabase/supabase-js');
 const { Store } = require('./src/store');
+const { Nuvem } = require('./src/nuvem');
+const nuvemConfig = require('./src/nuvem-config');
 const { criarHandlers } = require('./src/handlers');
 
 const emDesenvolvimento = process.argv.includes('--dev');
@@ -12,6 +15,37 @@ const INTERVALO_BACKUP_MS = 10 * 60 * 1000;
 let janela = null;
 let store = null;
 let temporizadorBackup = null;
+
+// ---------- nuvem (Supabase): leitura em tempo real é livre; escrever exige login (Ctrl+Shift+B) ----------
+function enviarParaJanela(canal, dados) {
+  if (janela && !janela.isDestroyed()) janela.webContents.send(canal, dados);
+}
+const nuvem = new Nuvem({
+  criarCliente: (url, anonKey) => createClient(url, anonKey),
+  aoAtualizarDados: (db) => {
+    store.aplicarDaNuvem(db);
+    // Usa o banco JÁ normalizado pelo store como "retrato" — senão a próxima comparação acha
+    // diferença à toa (normalização não é mudança de verdade) e fica reenviando pra nuvem sem parar.
+    nuvem.sincronizarRetratoCom(store.db);
+    enviarParaJanela('nuvem:dados', { db: store.db });
+  },
+  aoAtualizarStatus: (status) => enviarParaJanela('nuvem:status', status),
+});
+let nuvemConfigurada = false;
+try {
+  nuvem.configurar(nuvemConfig.url, nuvemConfig.anonKey);
+  nuvemConfigurada = true;
+} catch (_) {
+  // sem URL/chave preenchidas: o programa segue funcionando só com os dados locais
+}
+function obterBaseLocalParaNuvem() {
+  return {
+    versao: store.db.versao,
+    modulosOcultos: store.db.modulosOcultos,
+    modulosEscolhidos: store.db.modulosEscolhidos,
+    nuvemVinculada: store.db.nuvemVinculada,
+  };
+}
 
 // Pasta fixa e sem acento: o Electron descarta o nome do app no caminho padrão quando ele tem acento
 // ("Pesquisa de Relatórios"), e os dados acabariam soltos na raiz de AppData.
@@ -162,10 +196,25 @@ function iniciar() {
     verificarAtualizacoes,
     baixarAtualizacao,
     instalarAtualizacao,
+    nuvem,
   });
-  for (const [nome, fn] of Object.entries(handlers)) ipcMain.handle('api:' + nome, (_evento, ...args) => fn(...args));
+  for (const [nome, fn] of Object.entries(handlers)) {
+    ipcMain.handle('api:' + nome, async (_evento, ...args) => {
+      const resultado = await fn(...args);
+      // Depois de qualquer ação que grava algo, reflete na nuvem (não faz nada se não houver
+      // sessão de escrita, ou se nada realmente mudou — o diff cuida disso sozinho).
+      if (resultado.ok && nuvem.leituraAtiva) nuvem.registrarMudancaLocal(store.db).catch(() => {});
+      return resultado;
+    });
+  }
 
   criarJanela();
+
+  if (nuvemConfigurada) {
+    nuvem.iniciarSincronizacao(obterBaseLocalParaNuvem).catch(() => {
+      // sem internet ou nuvem fora do ar: o programa continua funcionando só com os dados locais
+    });
+  }
 
   // Checa por atualização uma vez ao abrir (silenciosamente: sem internet ou já atualizado, não incomoda).
   if (app.isPackaged) {

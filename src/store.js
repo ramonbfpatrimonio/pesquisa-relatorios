@@ -66,6 +66,7 @@ function validarBanco(obj) {
     r.colunas = unicos(r.colunas.map(limparNomeColuna).filter(Boolean));
     r.imagem = typeof r.imagem === 'string' ? r.imagem : null;
     r.imagemOriginal = typeof r.imagemOriginal === 'string' ? r.imagemOriginal : null;
+    r.imagemFiltro = typeof r.imagemFiltro === 'string' ? r.imagemFiltro : null;
     r.funcionalidade = typeof r.funcionalidade === 'string' && r.funcionalidade.trim() ? r.funcionalidade.replace(/\s+/g, ' ').trim() : null;
     r.filtros = limparFiltros(r.filtros);
   }
@@ -79,6 +80,10 @@ function validarBanco(obj) {
   // como sugestão desde já. Uma vez usados num relatório, continuam existindo aqui também.
   obj.colunasCadastradas = Array.isArray(obj.colunasCadastradas) ? unicos(obj.colunasCadastradas.map(limparNomeColuna).filter(Boolean)) : [];
   obj.filtrosCadastrados = limparFiltros(obj.filtrosCadastrados);
+  // Só o arquivo criado na primeira instalação vem com false; quem já tinha dados antes desta versão
+  // não tem o campo e conta como "já escolheu" (as marcações antigas continuam valendo).
+  obj.modulosEscolhidos = obj.modulosEscolhidos === false ? false : true;
+  obj.nuvemVinculada = obj.nuvemVinculada === true;
   obj.atualizadoEm = obj.atualizadoEm || null;
   return obj;
 }
@@ -119,6 +124,9 @@ class Store {
   _lerSeed() {
     const seed = validarBanco(JSON.parse(fs.readFileSync(this.seedPath, 'utf8')));
     seed.atualizadoEm = new Date().toISOString();
+    // Primeira instalação: todos os módulos começam desmarcados; a pessoa escolhe os que usa.
+    seed.modulosOcultos = [...seed.modulos];
+    seed.modulosEscolhidos = false;
     return seed;
   }
 
@@ -194,6 +202,7 @@ class Store {
         colunas,
         imagem: null,
         imagemOriginal: null,
+        imagemFiltro: null,
         funcionalidade,
         filtros,
       });
@@ -207,6 +216,7 @@ class Store {
     if (i < 0) throw new Error('Relatório não encontrado.');
     const [removido] = this.db.relatorios.splice(i, 1);
     this._apagarArquivoImagem(removido.imagem);
+    this._apagarArquivoImagem(removido.imagemFiltro);
     this._gravar();
     return this.db;
   }
@@ -235,6 +245,7 @@ class Store {
   definirModulosOcultos(nomes) {
     const validos = new Set(this.db.modulos);
     this.db.modulosOcultos = unicos((nomes || []).filter((m) => typeof m === 'string' && validos.has(m)));
+    this.db.modulosEscolhidos = true;
     this._gravar();
     return this.db;
   }
@@ -330,40 +341,52 @@ class Store {
     }
   }
 
-  anexarImagem(id, origem) {
+  // Cada relatório tem duas imagens: a do relatório (tipo "relatorio") e a da telinha de filtro (tipo "filtro").
+  _campoImagem(tipo) {
+    if (tipo === undefined || tipo === 'relatorio') return 'imagem';
+    if (tipo === 'filtro') return 'imagemFiltro';
+    throw new Error('Tipo de imagem desconhecido.');
+  }
+
+  anexarImagem(id, origem, tipo) {
+    const campo = this._campoImagem(tipo);
     const rel = this.db.relatorios.find((r) => r.id === id);
     if (!rel) throw new Error('Relatório não encontrado.');
     const ext = path.extname(origem).toLowerCase();
     if (!EXTENSOES_IMAGEM[ext]) throw new Error('Formato de imagem não suportado. Use GIF, PNG, JPG, WEBP ou BMP.');
     const { size } = fs.statSync(origem);
     if (size > LIMITE_IMAGEM) throw new Error('A imagem passa de 10 MB.');
-    const nomeNovo = `${rel.id}${ext}`;
+    // Nome novo a cada troca: nos outros computadores o arquivo antigo em cache não é reaproveitado por engano.
+    const nomeNovo = `${rel.id}-${campo === 'imagem' ? 'r' : 'f'}-${Date.now().toString(36)}${ext}`;
     fs.copyFileSync(origem, path.join(this.pastaImagens, nomeNovo));
-    if (rel.imagem && rel.imagem !== nomeNovo) this._apagarArquivoImagem(rel.imagem);
-    rel.imagem = nomeNovo;
+    if (rel[campo] && rel[campo] !== nomeNovo) this._apagarArquivoImagem(rel[campo]);
+    rel[campo] = nomeNovo;
     this._gravar();
     return this.db;
   }
 
-  removerImagem(id) {
+  removerImagem(id, tipo) {
+    const campo = this._campoImagem(tipo);
     const rel = this.db.relatorios.find((r) => r.id === id);
     if (!rel) throw new Error('Relatório não encontrado.');
-    this._apagarArquivoImagem(rel.imagem);
-    rel.imagem = null;
+    this._apagarArquivoImagem(rel[campo]);
+    rel[campo] = null;
     this._gravar();
     return this.db;
   }
 
-  obterImagem(id) {
+  obterImagem(id, tipo) {
+    const campo = this._campoImagem(tipo);
     const rel = this.db.relatorios.find((r) => r.id === id);
-    if (!rel || !rel.imagem) return null;
-    const arquivo = path.join(this.pastaImagens, path.basename(rel.imagem));
+    if (!rel || !rel[campo]) return null;
+    const arquivo = path.join(this.pastaImagens, path.basename(rel[campo]));
     if (!fs.existsSync(arquivo)) return null;
     const mime = EXTENSOES_IMAGEM[path.extname(arquivo).toLowerCase()] || 'application/octet-stream';
     return `data:${mime};base64,${fs.readFileSync(arquivo).toString('base64')}`;
   }
 
   // Liga as imagens de uma pasta aos relatórios pelo nome do arquivo que a planilha original apontava.
+  // A pasta original é "IMAGENS FILTRO ...", então elas entram como imagem do FILTRO.
   importarImagensDePasta(pasta) {
     const chave = (s) => semAcento(s).toLowerCase().replace(/\s+/g, '');
     const arquivos = new Map();
@@ -373,14 +396,14 @@ class Store {
     let associadas = 0;
     let semArquivo = 0;
     for (const rel of this.db.relatorios) {
-      if (!rel.imagemOriginal || rel.imagem) continue;
+      if (!rel.imagemOriginal || rel.imagemFiltro) continue;
       const origem = arquivos.get(chave(rel.imagemOriginal));
       if (!origem) {
         semArquivo++;
         continue;
       }
       try {
-        this.anexarImagem(rel.id, origem);
+        this.anexarImagem(rel.id, origem, 'filtro');
         associadas++;
       } catch (_) {
         semArquivo++;
@@ -452,11 +475,26 @@ class Store {
     const origem = path.join(this.pastaBackup, 'imagens');
     if (!fs.existsSync(origem)) return;
     for (const rel of this.db.relatorios) {
-      if (!rel.imagem) continue;
-      const local = path.join(this.pastaImagens, rel.imagem);
-      const backup = path.join(origem, rel.imagem);
-      if (!fs.existsSync(local) && fs.existsSync(backup)) fs.copyFileSync(backup, local);
+      for (const nome of [rel.imagem, rel.imagemFiltro]) {
+        if (!nome) continue;
+        const local = path.join(this.pastaImagens, nome);
+        const backup = path.join(origem, nome);
+        if (!fs.existsSync(local) && fs.existsSync(backup)) fs.copyFileSync(backup, local);
+      }
     }
+  }
+
+  // Usados pela sincronização com a nuvem: aplicar o que veio de lá e desfazer uma gravação que falhou.
+  aplicarDaNuvem(db) {
+    this.db = validarBanco(db);
+    this._gravar();
+    return this.db;
+  }
+
+  reverterPara(db) {
+    this.db = db;
+    this._gravar();
+    return this.db;
   }
 
   _trocarBanco(novo, tipoBackup) {
@@ -527,6 +565,7 @@ class Store {
           colunas,
           imagem: null,
           imagemOriginal: null,
+          imagemFiltro: null,
           funcionalidade,
           filtros,
         });
