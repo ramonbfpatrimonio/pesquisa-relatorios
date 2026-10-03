@@ -1262,3 +1262,79 @@ test('tema escuro salvo antes continua escuro quando o programa abre de novo', a
   assert.equal(a2.doc.querySelector('.tema-interruptor').getAttribute('aria-pressed'), 'true');
   a2.fechar();
 });
+
+test('Novo relatório: já dá pra escolher as duas imagens (com prévia) antes de salvar, e elas são anexadas de verdade ao criar', async () => {
+  const raiz0 = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-img-novo-'));
+  const gif = path.join(raiz0, 'rel.gif');
+  const png = path.join(raiz0, 'filtro.png');
+  fs.writeFileSync(gif, Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'));
+  fs.writeFileSync(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAHb2wHwAAAABJRU5ErkJggg==', 'base64'));
+  let proxima = gif;
+  const a = await abrirApp({ abrirImagem: async () => proxima });
+  await a.aba('Relatórios');
+  a.clicar(a.botao('Novo relatório'));
+  const m = a.modal();
+  assert.ok(a.botao('Anexar imagem', m), 'já dá pra escolher, mesmo sem ter salvo ainda');
+  assert.match(m.textContent, /só são salvas de verdade quando você clicar em Salvar/);
+
+  a.clicar(a.botao('Anexar imagem', m.querySelector('.bloco-imagem-relatorio')));
+  await esperar(() => m.querySelector('.bloco-imagem-relatorio img.previa'));
+
+  proxima = png;
+  a.clicar(a.botao('Anexar imagem', m.querySelector('.bloco-imagem-filtro')));
+  await esperar(() => m.querySelector('.bloco-imagem-filtro img.previa'));
+
+  // nada foi anexado de verdade ainda — não existe relatório nenhum com esse nome
+  assert.ok(!a.store.db.relatorios.some((r) => r.nome === 'Rel Com Imagem De Cara'));
+
+  a.digitar(m.querySelector('#campo-nome'), 'Rel Com Imagem De Cara');
+  m.querySelector('#campo-modulo').value = 'ATIVO_ECD';
+  a.escolherColuna(m.querySelector('.picker'), 'coluna_img_de_cara');
+  a.clicar(a.botao('Salvar', m));
+  // espera o modal fechar de vez — o clique de Salvar só fecha depois de criar o relatório E anexar
+  // as duas imagens pendentes; esperar só pelo nome pegaria um instante intermediário (ainda sem imagem).
+  await esperar(() => !a.modal());
+
+  const criado = a.store.db.relatorios.find((r) => r.nome === 'Rel Com Imagem De Cara');
+  assert.ok(criado.imagem && criado.imagemFiltro, 'as duas já vieram anexadas no relatório recém-criado');
+  a.fechar();
+});
+
+test('Editar relatório existente: upload de imagem aparece normal (não é afetado pela mudança acima)', async () => {
+  const a = await abrirApp();
+  a.store.salvarRelatorio({ nome: 'Rel Pra Editar', modulo: 'ATIVO_ECD', colunas: ['A'] });
+  await a.aba('Relatórios');
+  a.clicar(a.botao('Rel Pra Editar'));
+  const m = a.modal();
+  assert.equal(a.todos('.btn', m).filter((b) => b.textContent === 'Anexar imagem').length, 2, 'as duas (relatório e filtro)');
+  assert.ok(!m.textContent.includes('Salve o relatório primeiro'));
+  a.fechar();
+});
+
+test('painel de Usuários: a conta mestra (patrimonio@patrimonio.com) não mostra "Tornar editor" nem "Excluir"', async () => {
+  const nuvem = {
+    entrar: async () => ({ email: 'patrimonio@patrimonio.com', papel: 'admin' }),
+    sair: async () => {},
+    status: () => ({ leituraAtiva: true, autenticado: true, email: 'patrimonio@patrimonio.com', papel: 'admin', sincronizando: false, ultimoErro: null }),
+    listarUsuarios: async () => [
+      { email: 'patrimonio@patrimonio.com', papel: 'admin' },
+      { email: 'editor@x.com', papel: 'editor' },
+    ],
+  };
+  const a = await abrirApp({}, { nuvem });
+  await a.destravarMenu('patrimonio@patrimonio.com', 'qualquer');
+  await a.aba('Configurações');
+  const painelUsuarios = () => a.todos('.painel').find((p) => p.querySelector('h2') && p.querySelector('h2').textContent === 'Usuários');
+  await esperar(() => painelUsuarios() && painelUsuarios().querySelector('.tabela tbody tr'));
+
+  const linhaMestra = a.todos('.tabela tbody tr', painelUsuarios()).find((tr) => tr.textContent.includes('patrimonio@patrimonio.com'));
+  assert.match(linhaMestra.textContent, /Mestra/);
+  assert.ok(!a.botao('Tornar editor', linhaMestra));
+  assert.ok(!a.botao('Excluir', linhaMestra));
+  assert.ok(a.botao('Redefinir senha', linhaMestra), 'essa continua podendo');
+
+  const linhaEditor = a.todos('.tabela tbody tr', painelUsuarios()).find((tr) => tr.textContent.includes('editor@x.com'));
+  assert.ok(a.botao('Tornar admin', linhaEditor), 'outras contas continuam normais');
+  assert.ok(a.botao('Excluir', linhaEditor));
+  a.fechar();
+});

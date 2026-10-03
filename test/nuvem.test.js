@@ -8,7 +8,7 @@ const { Nuvem } = require('../src/nuvem');
 
 // ---------- cliente Supabase de mentira (mesma forma do supabase-js, sem rede) ----------
 
-function clienteFalso({ papel = 'admin', linhasIniciais = {} } = {}) {
+function clienteFalso({ papel = 'admin', linhasIniciais = {}, erroFuncaoUsuarios = null } = {}) {
   const banco = {
     modulos: [...(linhasIniciais.modulos || [])],
     relatorios: [...(linhasIniciais.relatorios || [])],
@@ -86,6 +86,18 @@ function clienteFalso({ papel = 'admin', linhasIniciais = {} } = {}) {
     functions: {
       invoke: async (_nome, { body }) => {
         chamadas.invoke.push(body);
+        if (erroFuncaoUsuarios) {
+          // Mesma forma que o supabase-js devolve de verdade quando a Edge Function responde
+          // com status diferente de 2xx: "error.message" é só um aviso genérico, e a mensagem
+          // real (o que a função mandou) fica dentro de "error.context" (a resposta HTTP crua).
+          return {
+            data: null,
+            error: {
+              message: 'Edge Function returned a non-2xx status code',
+              context: { json: async () => ({ erro: erroFuncaoUsuarios }) },
+            },
+          };
+        }
         return { data: { ok: true }, error: null };
       },
     },
@@ -298,6 +310,19 @@ test('gerenciar usuários chama a função do servidor com a ação certa', asyn
   await nuvem.excluirUsuario('novo@x.com');
   const acoes = cliente()._chamadas.invoke.map((c) => c.acao);
   assert.deepEqual(acoes, ['criar', 'redefinirSenha', 'papel', 'excluir']);
+});
+
+test('gerenciar usuários: quando a função dá erro, mostra a mensagem de verdade (não o aviso genérico do supabase-js)', async () => {
+  const { nuvem } = await novaNuvemSincronizada({ erroFuncaoUsuarios: 'E-mail já cadastrado.' });
+  await nuvem.entrar('patrimonio@patrimonio.com', 'senha-certa');
+  await assert.rejects(() => nuvem.criarUsuario('ja@existe.com', 'abcdef', 'editor'), /E-mail já cadastrado\./);
+});
+
+test('gerenciar usuários: se a resposta de erro não tiver o corpo esperado, cai numa mensagem genérica (não trava)', async () => {
+  const { nuvem, cliente } = await novaNuvemSincronizada();
+  await nuvem.entrar('patrimonio@patrimonio.com', 'senha-certa');
+  cliente().functions.invoke = async () => ({ data: null, error: {} }); // sem mensagem nem "context" nenhum
+  await assert.rejects(() => nuvem.criarUsuario('x@x.com', 'abcdef', 'editor'), /Falha ao falar com o servidor/);
 });
 
 test('imagens: subir, baixar e apagar usam o Storage do cliente', async () => {

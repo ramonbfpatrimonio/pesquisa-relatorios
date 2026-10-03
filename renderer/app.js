@@ -1476,13 +1476,46 @@
 
     const editorFiltros = criarEditorFiltros(rel ? rel.filtros : []);
 
-    // As duas imagens (do relatório e do filtro) — só depois que o relatório existe.
+    // Num relatório NOVO ainda não existe ID pra anexar nada de verdade — guarda só o caminho
+    // escolhido aqui, com prévia, e anexa de fato assim que o relatório for salvo (vira o primeiro
+    // "anexarImagemDeArquivo" logo depois do "salvarRelatorio", no clique de Salvar, mais abaixo).
+    const pendentes = { relatorio: null, filtro: null };
+
     function criarBlocoImagem(tipo) {
       const campo = tipo === 'filtro' ? 'imagemFiltro' : 'imagem';
       const area = h('div', { class: 'imagem-campo' });
+
       const desenharImagem = async () => {
-        const atual = estado.db.relatorios.find((r) => r.id === rel.id);
         area.replaceChildren();
+
+        if (novo) {
+          const caminho = pendentes[tipo];
+          if (caminho) {
+            const r = await chamar('lerArquivoComoImagem', caminho);
+            if (r && r.dados) area.append(h('img', { class: 'previa', src: r.dados, alt: `${ROTULO_IMAGEM[tipo]} escolhida` }));
+            else area.append(h('p', { class: 'ajuda' }, 'Não consegui ler esse arquivo. Escolha de novo.'));
+          }
+          area.append(
+            h(
+              'div',
+              { class: 'barra', role: 'group' },
+              h('button', {
+                type: 'button',
+                class: 'btn pequeno',
+                onclick: async () => {
+                  const r = await chamar('escolherArquivoImagem');
+                  if (r && r.dados) { pendentes[tipo] = r.dados; desenharImagem(); }
+                },
+              }, caminho ? 'Trocar imagem' : 'Anexar imagem'),
+              caminho
+                ? h('button', { type: 'button', class: 'btn pequeno perigo', onclick: () => { pendentes[tipo] = null; desenharImagem(); } }, 'Remover imagem')
+                : null
+            )
+          );
+          return;
+        }
+
+        const atual = estado.db.relatorios.find((r) => r.id === rel.id);
         if (atual && atual[campo]) {
           const r = await chamar('obterImagem', rel.id, tipo);
           if (r && r.dados) area.append(h('img', { class: 'previa', src: r.dados, alt: `${ROTULO_IMAGEM[tipo]} anexada`, title: 'Clique pra abrir no tamanho original', onclick: () => chamar('abrirImagemNoSistema', rel.id, tipo) }));
@@ -1519,16 +1552,19 @@
       return h('div', { class: `bloco-imagem bloco-imagem-${tipo}` }, h('span', { class: 'rotulo' }, ROTULO_IMAGEM[tipo]), area);
     }
 
-    let blocoImagem = null;
-    if (!novo) {
-      blocoImagem = h(
-        'div',
-        {},
-        criarBlocoImagem('relatorio'),
-        criarBlocoImagem('filtro'),
-        h('p', { class: 'ajuda' }, 'As imagens são salvas assim que você escolhe o arquivo. Nos resultados da pesquisa aparecem dois ícones, um para cada imagem.')
-      );
-    }
+    const blocoImagem = h(
+      'div',
+      {},
+      criarBlocoImagem('relatorio'),
+      criarBlocoImagem('filtro'),
+      h(
+        'p',
+        { class: 'ajuda' },
+        novo
+          ? 'Pode escolher as imagens agora — elas só são salvas de verdade quando você clicar em Salvar, abaixo.'
+          : 'As imagens são salvas assim que você escolhe o arquivo. Nos resultados da pesquisa aparecem dois ícones, um para cada imagem.'
+      )
+    );
 
     abrirModal({
       titulo: novo ? 'Novo relatório' : 'Editar relatório',
@@ -1588,7 +1624,24 @@
               filtros: editorFiltros.valores(),
             });
             if (!r) return false;
-            atualizarBanco(r.dados);
+            let dbFinal = r.dados;
+
+            // Relatório novo com alguma imagem escolhida: agora que ele já existe (tem ID), anexa de
+            // verdade. Se uma das duas falhar (ex.: arquivo movido nesse meio tempo), avisa mas não
+            // desfaz o relatório — ele já foi criado, só fica sem aquela imagem (pode anexar depois).
+            if (novo) {
+              const criado = dbFinal.relatorios.find((x) => x.modulo === selModulo.value && x.nome === campoNome.value.replace(/\s+/g, ' ').trim());
+              if (criado) {
+                for (const tipo of ['relatorio', 'filtro']) {
+                  if (!pendentes[tipo]) continue;
+                  const r2 = await chamarSemAviso('anexarImagemDeArquivo', criado.id, tipo, pendentes[tipo]);
+                  if (r2.ok) dbFinal = r2.dados;
+                  else aviso(`${ROTULO_IMAGEM[tipo]}: ${r2.erro}`, 'erro', 7000);
+                }
+              }
+            }
+
+            atualizarBanco(dbFinal);
             aviso(novo ? 'Relatório criado' : 'Relatório salvo');
             render();
           },
@@ -2111,6 +2164,10 @@
 
   // ---------- painel de usuários (só quando estado.nuvemPapel === 'admin') ----------
 
+  // Essa conta é a mestra: nunca pode deixar de ser admin nem ser excluída (o servidor também
+  // recusa, mesmo que alguém tente pela API direto — aqui é só pra nem mostrar o botão).
+  const EMAIL_ADMIN_MESTRE = 'patrimonio@patrimonio.com';
+
   function renderPainelUsuarios() {
     const corpo = h('div', {}, h('p', { class: 'ajuda' }, 'Carregando…'));
     const painel = h('section', { class: 'painel' }, h('h2', {}, 'Usuários'), h('p', { class: 'ajuda' }, 'Quem pode entrar (Ctrl+Shift+B) e editar. "Administrador" também gerencia outros usuários.'), corpo);
@@ -2135,36 +2192,40 @@
                 'tr',
                 {},
                 h('td', {}, u.email),
-                h('td', {}, u.papel === 'admin' ? 'Administrador' : 'Editor'),
+                h('td', {}, u.papel === 'admin' ? 'Administrador' : 'Editor', u.email === EMAIL_ADMIN_MESTRE ? h('span', { class: 'tag auto' }, 'Mestra') : null),
                 h(
                   'td',
                   { class: 'acoes' },
-                  h('button', {
-                    type: 'button',
-                    class: 'btn pequeno discreto',
-                    onclick: async () => {
-                      const novoPapel = u.papel === 'admin' ? 'editor' : 'admin';
-                      const ok = await confirmar({ titulo: 'Trocar papel', mensagem: `Tornar ${u.email} ${novoPapel === 'admin' ? 'administrador' : 'editor'}?`, rotulo: 'Trocar' });
-                      if (!ok) return;
-                      const r = await chamar('nuvemDefinirPapel', u.email, novoPapel);
-                      if (r) { aviso('Papel alterado.'); carregar(); }
-                    },
-                  }, u.papel === 'admin' ? 'Tornar editor' : 'Tornar admin'),
+                  u.email === EMAIL_ADMIN_MESTRE
+                    ? null
+                    : h('button', {
+                        type: 'button',
+                        class: 'btn pequeno discreto',
+                        onclick: async () => {
+                          const novoPapel = u.papel === 'admin' ? 'editor' : 'admin';
+                          const ok = await confirmar({ titulo: 'Trocar papel', mensagem: `Tornar ${u.email} ${novoPapel === 'admin' ? 'administrador' : 'editor'}?`, rotulo: 'Trocar' });
+                          if (!ok) return;
+                          const r = await chamar('nuvemDefinirPapel', u.email, novoPapel);
+                          if (r) { aviso('Papel alterado.'); carregar(); }
+                        },
+                      }, u.papel === 'admin' ? 'Tornar editor' : 'Tornar admin'),
                   h('button', {
                     type: 'button',
                     class: 'btn pequeno discreto',
                     onclick: () => abrirRedefinirSenhaUsuario(u.email),
                   }, 'Redefinir senha'),
-                  h('button', {
-                    type: 'button',
-                    class: 'btn pequeno discreto perigo',
-                    onclick: async () => {
-                      const ok = await confirmar({ titulo: 'Excluir usuário', mensagem: `Excluir o acesso de ${u.email}?`, rotulo: 'Excluir', perigo: true });
-                      if (!ok) return;
-                      const r = await chamar('nuvemExcluirUsuario', u.email);
-                      if (r) { aviso('Usuário excluído.'); carregar(); }
-                    },
-                  }, 'Excluir')
+                  u.email === EMAIL_ADMIN_MESTRE
+                    ? null
+                    : h('button', {
+                        type: 'button',
+                        class: 'btn pequeno discreto perigo',
+                        onclick: async () => {
+                          const ok = await confirmar({ titulo: 'Excluir usuário', mensagem: `Excluir o acesso de ${u.email}?`, rotulo: 'Excluir', perigo: true });
+                          if (!ok) return;
+                          const r = await chamar('nuvemExcluirUsuario', u.email);
+                          if (r) { aviso('Usuário excluído.'); carregar(); }
+                        },
+                      }, 'Excluir')
                 )
               )
             )

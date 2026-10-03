@@ -292,3 +292,45 @@ test('abrirImagemNoSistema dá erro claro quando não tem essa imagem', async ()
   assert.equal(r.ok, false);
   assert.match(r.erro, /não tem essa imagem/);
 });
+
+test('escolherArquivoImagem só abre a janela e devolve o caminho, sem anexar em nada', async () => {
+  const { handlers, store } = montar({ abrirImagem: async () => '/tmp/x.gif' });
+  const r = await handlers.escolherArquivoImagem();
+  assert.equal(r.ok, true);
+  assert.equal(r.dados, '/tmp/x.gif');
+  assert.ok(!store.db.relatorios.some((rel) => rel.imagem)); // nenhum relatório foi tocado
+});
+
+test('lerArquivoComoImagem lê um arquivo solto do disco (sem precisar de relatório nenhum)', async () => {
+  const { handlers } = montar();
+  const raiz0 = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-ler-img-'));
+  const arquivo = path.join(raiz0, 'a.gif');
+  fs.writeFileSync(arquivo, Buffer.from('R0lGODlhAQABAAAAACw=', 'base64'));
+  const r = await handlers.lerArquivoComoImagem(arquivo);
+  assert.equal(r.ok, true);
+  assert.match(r.dados, /^data:image\/gif;base64,/);
+
+  const r2 = await handlers.lerArquivoComoImagem(path.join(raiz0, 'nao-existe.gif'));
+  assert.equal(r2.ok, false);
+  assert.match(r2.erro, /não encontrado/);
+
+  const txt = path.join(raiz0, 'nao-e-imagem.txt');
+  fs.writeFileSync(txt, 'oi');
+  const r3 = await handlers.lerArquivoComoImagem(txt);
+  assert.equal(r3.ok, false);
+  assert.match(r3.erro, /Formato/);
+});
+
+test('anexarImagemDeArquivo anexa um caminho já escolhido antes (fluxo de relatório recém-criado)', async () => {
+  const subidas = [];
+  const nuvem = { ...nuvemFalsaPadrao(), podeEscrever: () => true, subirImagem: async (_c, nome) => subidas.push(nome) };
+  const raiz0 = fs.mkdtempSync(path.join(os.tmpdir(), 'pesq-anexar-depois-'));
+  const arquivo = path.join(raiz0, 'a.gif');
+  fs.writeFileSync(arquivo, 'GIF89a');
+  const { handlers, store } = montar({}, { nuvem });
+  const id = store.db.relatorios[0].id;
+  const r = await handlers.anexarImagemDeArquivo(id, 'filtro', arquivo);
+  assert.equal(r.ok, true);
+  assert.ok(r.dados.relatorios.find((rel) => rel.id === id).imagemFiltro);
+  assert.equal(subidas.length, 1);
+});

@@ -23,6 +23,24 @@ function mensagemErro(erro, generica) {
   return erro.message || generica;
 }
 
+// Quando a Edge Function responde com erro (status diferente de 2xx), o supabase-js só dá um
+// aviso genérico ("Edge Function returned a non-2xx status code") em "error.message" — a mensagem
+// de verdade (o que a função realmente disse, ex.: "E-mail já cadastrado") vem dentro de
+// "error.context", que é a resposta HTTP crua. Aqui a gente tenta ler essa resposta pra achar o
+// texto certo; se não der (versão antiga do supabase-js, resposta vazia etc.), cai na genérica.
+async function mensagemDeErroDaFuncao(erro) {
+  const generica = 'Falha ao falar com o servidor.';
+  try {
+    if (erro && erro.context && typeof erro.context.json === 'function') {
+      const corpo = await erro.context.json();
+      if (corpo && corpo.erro) return corpo.erro;
+    }
+  } catch (_) {
+    /* resposta não era JSON, ou já tinha sido lida — usa a genérica abaixo */
+  }
+  return mensagemErro(erro, generica);
+}
+
 class Nuvem {
   constructor({ criarCliente, aoAtualizarDados, aoAtualizarStatus, atraso = 400 } = {}) {
     this._criarCliente = criarCliente; // (url, anonKey) => clienteSupabase
@@ -280,7 +298,7 @@ class Nuvem {
   async chamarFuncaoUsuarios(acao, payload) {
     if (!this.cliente) throw new Error('A nuvem ainda não foi configurada neste programa.');
     const { data, error } = await this.cliente.functions.invoke('gerenciar-usuarios', { body: { acao, ...payload } });
-    if (error) throw new Error(mensagemErro(error, 'Falha ao falar com o servidor.'));
+    if (error) throw new Error(await mensagemDeErroDaFuncao(error));
     if (data && data.erro) throw new Error(data.erro);
     return data;
   }

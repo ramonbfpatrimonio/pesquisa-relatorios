@@ -610,4 +610,4 @@ class Store {
   }
 }
 
-module.exports = { Store, validarBanco, PADRAO_BACKUP, EXTENSOES_IMAGEM };
+module.exports = { Store, validarBanco, PADRAO_BACKUP, EXTENSOES_IMAGEM, LIMITE_IMAGEM };

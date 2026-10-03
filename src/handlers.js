@@ -7,6 +7,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { EXTENSOES_IMAGEM, LIMITE_IMAGEM } = require('./store');
 
 // Excel no Brasil às vezes salva CSV como "ANSI" (Windows-1252), não UTF-8. Lemos como UTF-8
 // primeiro; se aparecer o caractere de "isso não deu certo" (�), tentamos de novo como Latin-1,
@@ -40,6 +41,16 @@ function criarHandlers({ store, dialogo, abrirPasta, abrirArquivo, salvarPastaBa
     db: store.db,
     info: { ...store.resumo(), versao, avisoInicial: store.avisoInicial, novidades: lerNovidades() },
   });
+
+  // Compartilhada entre "anexarImagem" (abre a janela e anexa na hora) e "anexarImagemDeArquivo"
+  // (o caminho já foi escolhido antes — usada ao salvar as imagens de um relatório recém-criado).
+  function anexarImagemDeCaminho(id, tipo, caminho) {
+    const db = store.anexarImagem(id, caminho, tipo);
+    const rel = db.relatorios.find((r) => r.id === id);
+    const nomeArquivo = tipo === 'filtro' ? rel.imagemFiltro : rel.imagem;
+    if (nuvem.podeEscrever()) nuvem.subirImagem(path.join(store.pastaImagens, nomeArquivo), nomeArquivo).catch(() => {});
+    return db;
+  }
 
   const acoes = {
     carregar: () => uteis(),
@@ -82,12 +93,24 @@ function criarHandlers({ store, dialogo, abrirPasta, abrirArquivo, salvarPastaBa
     anexarImagem: async (id, tipo) => {
       const arquivo = await dialogo.abrirImagem();
       if (!arquivo) return null;
-      const db = store.anexarImagem(id, arquivo, tipo);
-      const rel = db.relatorios.find((r) => r.id === id);
-      const nomeArquivo = tipo === 'filtro' ? rel.imagemFiltro : rel.imagem;
-      if (nuvem.podeEscrever()) nuvem.subirImagem(path.join(store.pastaImagens, nomeArquivo), nomeArquivo).catch(() => {});
-      return db;
+      return anexarImagemDeCaminho(id, tipo, arquivo);
     },
+    // Abre só a janela de escolher arquivo, sem anexar em nada — usado quando o relatório ainda
+    // nem foi salvo (não existe ID pra anexar ainda). O caminho fica guardado na tela até salvar.
+    escolherArquivoImagem: async () => dialogo.abrirImagem(),
+    // Lê um arquivo de imagem qualquer do disco e devolve pronto pra mostrar (data:...), sem
+    // precisar que ele já esteja ligado a nenhum relatório — é a prévia de uma imagem ainda não
+    // anexada (relatório novo, antes de salvar).
+    lerArquivoComoImagem: async (caminho) => {
+      if (!caminho || !fs.existsSync(caminho)) throw new Error('Arquivo não encontrado.');
+      const ext = path.extname(caminho).toLowerCase();
+      if (!EXTENSOES_IMAGEM[ext]) throw new Error('Formato de imagem não suportado. Use GIF, PNG, JPG, WEBP ou BMP.');
+      if (fs.statSync(caminho).size > LIMITE_IMAGEM) throw new Error('A imagem passa de 10 MB.');
+      return `data:${EXTENSOES_IMAGEM[ext]};base64,${fs.readFileSync(caminho).toString('base64')}`;
+    },
+    // Anexa um arquivo cujo caminho já foi escolhido antes (via escolherArquivoImagem) — usado
+    // para anexar as imagens assim que um relatório novo acaba de ser criado.
+    anexarImagemDeArquivo: (id, tipo, caminho) => anexarImagemDeCaminho(id, tipo, caminho),
     // Abre a imagem no visualizador padrão do Windows — tamanho e formato originais, de verdade
     // (o que aparece dentro do programa é só uma prévia, redimensionada pra caber na tela).
     abrirImagemNoSistema: async (id, tipo) => {

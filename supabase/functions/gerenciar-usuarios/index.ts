@@ -17,6 +17,9 @@ const responder = (corpo: unknown, status = 200) =>
   new Response(JSON.stringify(corpo), { status, headers: cabecalhos });
 
 const PAPEIS = ['admin', 'editor'];
+// Esta conta nunca pode deixar de ser administrador nem ser excluída pelo programa — é a conta
+// mestra. Se precisar mesmo mudar isso um dia, só editando a tabela "usuarios" direto no Supabase.
+const EMAIL_MASTER = 'patrimonio@patrimonio.com';
 const EMAIL_OK = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 Deno.serve(async (req) => {
@@ -63,6 +66,7 @@ Deno.serve(async (req) => {
     if (acao === 'criar') {
       if (!PAPEIS.includes(papel)) return responder({ erro: 'Papel inválido.' }, 400);
       if (String(senha ?? '').length < 6) return responder({ erro: 'A senha precisa ter pelo menos 6 caracteres.' }, 400);
+      if (alvo === EMAIL_MASTER && papel !== 'admin') return responder({ erro: 'Essa conta é mestra e só pode ser administradora.' }, 400);
 
       const { error } = await admin.auth.admin.createUser({ email: alvo, password: senha, email_confirm: true });
       if (error && !/already|registered|exists/i.test(error.message)) return responder({ erro: error.message }, 400);
@@ -83,6 +87,7 @@ Deno.serve(async (req) => {
 
     if (acao === 'papel') {
       if (!PAPEIS.includes(papel)) return responder({ erro: 'Papel inválido.' }, 400);
+      if (alvo === EMAIL_MASTER && papel !== 'admin') return responder({ erro: 'Essa conta é mestra e não pode deixar de ser administradora.' }, 400);
       const { data: atual } = await admin.from('usuarios').select('papel').eq('email', alvo).maybeSingle();
       if (!atual) return responder({ erro: 'Usuário não encontrado.' }, 404);
       if (atual.papel === 'admin' && papel !== 'admin' && (await contarAdmins()) <= 1) {
@@ -94,6 +99,7 @@ Deno.serve(async (req) => {
     }
 
     if (acao === 'excluir') {
+      if (alvo === EMAIL_MASTER) return responder({ erro: 'Essa conta é mestra e não pode ser excluída.' }, 400);
       if (alvo === chamador) return responder({ erro: 'Você não pode excluir o próprio usuário.' }, 400);
       const { data: atual } = await admin.from('usuarios').select('papel').eq('email', alvo).maybeSingle();
       if (atual?.papel === 'admin' && (await contarAdmins()) <= 1) {
